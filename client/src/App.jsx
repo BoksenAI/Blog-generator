@@ -9,11 +9,20 @@ function App() {
     creator: '',
     draftTopic: '',
     specialInstructions: '',
+    imageFileName: '',
   });
 
   const [blogContent, setBlogContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const handleImageChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    setFormData((prev) => ({
+      ...prev,
+      imageFileName: file ? file.name : '',
+    }));
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -45,6 +54,7 @@ function App() {
       }
 
       setBlogContent(data.blogContent);
+      
     } catch (err) {
       setError(err.message || 'An error occurred while generating the blog');
     } finally {
@@ -170,6 +180,29 @@ Generated: ${new Date().toLocaleString()}
               placeholder="Any special instructions or requirements for the blog..."
               rows="4"
             />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="imageFile">Image (optional)</label>
+            <div className="image-dropbox">
+              <input
+                id="imageFile"
+                type="file"
+                accept="image/*"
+                onChange={handleImageChange}
+              />
+              <p className="image-dropbox-help">
+                Drag and drop an image file here, or click to choose a file.
+              </p>
+              {formData.imageFileName && (
+                <p className="image-selected">
+                  Selected: <strong>{formData.imageFileName}</strong>
+                </p>
+              )}
+            </div>
+            <small className="helper-text">
+              The file name will be sent to the AI to generate image metadata (file name, title tag, alt text) and appended to the end of the blog draft.
+            </small>
           </div>
 
           <button type="submit" className="submit-btn" disabled={loading}>

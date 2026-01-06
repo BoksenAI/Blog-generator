@@ -146,6 +146,34 @@
   font-size: 1rem;
 }
 
+.image-dropbox {
+  border: 2px dashed #cbd5f5;
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+  background-color: #f8f9ff;
+}
+
+.image-dropbox input[type="file"] {
+  display: block;
+  margin: 0 auto 8px auto;
+}
+
+.image-dropbox-help {
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.image-selected {
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.helper-text {
+  font-size: 0.8rem;
+  color: #777;
+}
+
 @media (max-width: 768px) {
   .container {
     padding: 20px;

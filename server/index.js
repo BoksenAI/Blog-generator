@@ -94,7 +94,7 @@ Format: H1, H2, H3, clean paragraph spacing.`;
             max_tokens: 2048, // Reduced from 4096 as some models have lower limits
           }),
         });
-        
+        //Checks for the status response from groq and return the model name and error message
         if (!groqResponse.ok) {
           const errorData = await groqResponse.json().catch(() => ({ error: 'Unknown error' }));
           console.error('Groq API error details:', errorData);

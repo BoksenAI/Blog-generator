@@ -43,7 +43,7 @@ cp .env.example .env
 
 4. Edit `server/.env` and add your Gemini API key:
 ```
-GEMINI_API_KEY=your_gemini_api_key_here
+GROQ_API_KEY=your_groq_api_key_here
 PORT=3001
 ```
 

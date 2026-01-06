@@ -1,0 +1,199 @@
+import React, { useState } from 'react';
+import './App.css';
+
+function App() {
+  const [formData, setFormData] = useState({
+    venueName: '',
+    targetMonth: '',
+    weekOfMonth: '',
+    creator: '',
+    draftTopic: '',
+    specialInstructions: '',
+  });
+
+  const [blogContent, setBlogContent] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setBlogContent('');
+
+    try {
+      const response = await fetch('/api/generate-blog', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate blog');
+      }
+
+      setBlogContent(data.blogContent);
+    } catch (err) {
+      setError(err.message || 'An error occurred while generating the blog');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadDraft = () => {
+    if (!blogContent) {
+      alert('No blog content to download. Please generate a blog first.');
+      return;
+    }
+
+    const metadata = `
+Venue Name: ${formData.venueName}
+Target Month: ${formData.targetMonth}
+Week of Month: ${formData.weekOfMonth}
+Creator: ${formData.creator}
+Draft Topic/Title: ${formData.draftTopic}
+${formData.specialInstructions ? `Special Instructions: ${formData.specialInstructions}` : ''}
+Generated: ${new Date().toLocaleString()}
+
+---
+
+`;
+
+    const content = metadata + blogContent;
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `blog-draft-${formData.venueName}-${formData.targetMonth}-${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="app">
+      <div className="container">
+        <h1 className="title">Blog Generator</h1>
+        <p className="subtitle">Generate professional blog posts using AI</p>
+
+        <form onSubmit={handleSubmit} className="form">
+          <div className="form-group">
+            <label htmlFor="venueName">Venue Name *</label>
+            <input
+              type="text"
+              id="venueName"
+              name="venueName"
+              value={formData.venueName}
+              onChange={handleChange}
+              required
+              placeholder="Enter venue name"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="targetMonth">Target Month *</label>
+            <input
+              type="text"
+              id="targetMonth"
+              name="targetMonth"
+              value={formData.targetMonth}
+              onChange={handleChange}
+              required
+              placeholder="e.g., January 2024"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="weekOfMonth">Week of Month *</label>
+            <select
+              id="weekOfMonth"
+              name="weekOfMonth"
+              value={formData.weekOfMonth}
+              onChange={handleChange}
+              required
+            >
+              <option value="">Select week</option>
+              <option value="First Week">First Week</option>
+              <option value="Second Week">Second Week</option>
+              <option value="Third Week">Third Week</option>
+              <option value="Fourth Week">Fourth Week</option>
+              <option value="Last Week">Last Week</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="creator">Creator *</label>
+            <input
+              type="text"
+              id="creator"
+              name="creator"
+              value={formData.creator}
+              onChange={handleChange}
+              required
+              placeholder="Enter creator name"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="draftTopic">Draft Topic/Title *</label>
+            <input
+              type="text"
+              id="draftTopic"
+              name="draftTopic"
+              value={formData.draftTopic}
+              onChange={handleChange}
+              required
+              placeholder="Enter blog topic or title"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="specialInstructions">Special Instructions</label>
+            <textarea
+              id="specialInstructions"
+              name="specialInstructions"
+              value={formData.specialInstructions}
+              onChange={handleChange}
+              placeholder="Any special instructions or requirements for the blog..."
+              rows="4"
+            />
+          </div>
+
+          <button type="submit" className="submit-btn" disabled={loading}>
+            {loading ? 'Generating...' : 'Generate Blog'}
+          </button>
+        </form>
+
+        {error && <div className="error-message">{error}</div>}
+
+        {blogContent && (
+          <div className="blog-preview">
+            <div className="blog-header">
+              <h2>Generated Blog</h2>
+              <button onClick={downloadDraft} className="download-btn">
+                Download Draft
+              </button>
+            </div>
+            <div className="blog-content">{blogContent}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default App;
+

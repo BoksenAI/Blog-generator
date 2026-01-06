@@ -27,7 +27,7 @@ A modern web application that simplifies blog generation using Google's Gemini A
 
 1. Clone the repository and navigate to the project directory:
 ```bash
-cd blog-gen
+cd blog-generator
 ```
 
 2. Install all dependencies:

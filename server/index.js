@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { supabase } from "./supabaseClient.js";
+import serverless from "serverless-http";
 
 dotenv.config();
 
@@ -268,6 +269,12 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+// Export handler for Netlify serverless
+export const handler = serverless(app);
+
+// Only start local server when not running in Netlify
+if (process.env.NETLIFY !== "true") {
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}

@@ -39,7 +39,9 @@ function App() {
     setBlogContent('');
 
     try {
-      const response = await fetch('/api/generate-blog', {
+      // Use VITE_API_URL from environment variables, or default to relative path (for proxy)
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiUrl}/api/generate-blog`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -54,7 +56,7 @@ function App() {
       }
 
       setBlogContent(data.blogContent);
-      
+
     } catch (err) {
       setError(err.message || 'An error occurred while generating the blog');
     } finally {

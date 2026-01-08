@@ -3,7 +3,7 @@
 }
 
 .container {
-  background: white;
+  background: rgb(249, 247, 247);
   border-radius: 16px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
   padding: 40px;
@@ -15,7 +15,7 @@
   color: #333;
   margin-bottom: 10px;
   text-align: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #0c0303 0%, #764ba2 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -61,7 +61,7 @@
 .form-group select:focus,
 .form-group textarea:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: #090301;
 }
 
 .form-group textarea {
@@ -71,7 +71,7 @@
 
 .submit-btn {
   padding: 14px 28px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #2e0503 0%, #764ba2 100%);
   color: white;
   border: none;
   border-radius: 8px;
@@ -146,6 +146,34 @@
   font-size: 1rem;
 }
 
+.image-dropbox {
+  border: 2px dashed #cbd5f5;
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+  background-color: #f8f9ff;
+}
+
+.image-dropbox input[type="file"] {
+  display: block;
+  margin: 0 auto 8px auto;
+}
+
+.image-dropbox-help {
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.image-selected {
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.helper-text {
+  font-size: 0.8rem;
+  color: #777;
+}
+
 @media (max-width: 768px) {
   .container {
     padding: 20px;
@@ -166,3 +194,26 @@
   }
 }
 
+.image-preview {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.image-card {
+  margin-top: 16px;
+}
+
+.image {
+  width: 100%;
+  max-width: 900px;
+  border-radius: 12px;
+  display: block;
+}
+
+.image-meta {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  opacity: 0.9;
+}

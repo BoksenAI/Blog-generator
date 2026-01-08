@@ -1,19 +1,29 @@
-import React, { useState } from 'react';
-import './App.css';
+import React, { useState } from "react";
+import "./App.css";
 
 function App() {
   const [formData, setFormData] = useState({
-    venueName: '',
-    targetMonth: '',
-    weekOfMonth: '',
-    creator: '',
-    draftTopic: '',
-    specialInstructions: '',
+    venueName: "",
+    targetMonth: "",
+    weekOfMonth: "",
+    creator: "",
+    draftTopic: "",
+    specialInstructions: "",
+    imageFileName: "",
   });
 
-  const [blogContent, setBlogContent] = useState('');
+  const [blogContent, setBlogContent] = useState("");
+  const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
+
+  const handleImageChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    setFormData((prev) => ({
+      ...prev,
+      imageFileName: file ? file.name : "",
+    }));
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -26,14 +36,17 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
-    setBlogContent('');
+    setError("");
+    setBlogContent("");
+    setImages([]); // clear old images when generating again
 
     try {
-      const response = await fetch('/api/generate-blog', {
+      // Use VITE_API_URL from environment variables, or default to relative path (for proxy)
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiUrl}/api/generate-blog`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(formData),
       });
@@ -41,12 +54,13 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to generate blog');
+        throw new Error(data.error || "Failed to generate blog");
       }
 
       setBlogContent(data.blogContent);
+      setImages(data.images || []); // <-- save images + metadata returned from backend
     } catch (err) {
-      setError(err.message || 'An error occurred while generating the blog');
+      setError(err.message || "An error occurred while generating the blog");
     } finally {
       setLoading(false);
     }
@@ -54,7 +68,7 @@ function App() {
 
   const downloadDraft = () => {
     if (!blogContent) {
-      alert('No blog content to download. Please generate a blog first.');
+      alert("No blog content to download. Please generate a blog first.");
       return;
     }
 
@@ -64,7 +78,10 @@ Target Month: ${formData.targetMonth}
 Week of Month: ${formData.weekOfMonth}
 Creator: ${formData.creator}
 Draft Topic/Title: ${formData.draftTopic}
-${formData.specialInstructions ? `Special Instructions: ${formData.specialInstructions}` : ''}
+${formData.specialInstructions
+        ? `Special Instructions: ${formData.specialInstructions}`
+        : ""
+      }
 Generated: ${new Date().toLocaleString()}
 
 ---
@@ -72,11 +89,12 @@ Generated: ${new Date().toLocaleString()}
 `;
 
     const content = metadata + blogContent;
-    const blob = new Blob([content], { type: 'text/plain' });
+    const blob = new Blob([content], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = `blog-draft-${formData.venueName}-${formData.targetMonth}-${Date.now()}.txt`;
+    a.download = `blog-draft-${formData.venueName}-${formData.targetMonth
+      }-${Date.now()}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -172,8 +190,33 @@ Generated: ${new Date().toLocaleString()}
             />
           </div>
 
+          <div className="form-group">
+            <label htmlFor="imageFile">Image (optional)</label>
+            <div className="image-dropbox">
+              <input
+                id="imageFile"
+                type="file"
+                accept="image/*"
+                onChange={handleImageChange}
+              />
+              <p className="image-dropbox-help">
+                Drag and drop an image file here, or click to choose a file.
+              </p>
+              {formData.imageFileName && (
+                <p className="image-selected">
+                  Selected: <strong>{formData.imageFileName}</strong>
+                </p>
+              )}
+            </div>
+            <small className="helper-text">
+              The file name will be sent to the AI to generate image metadata
+              (file name, title tag, alt text) and appended to the end of the
+              blog draft.
+            </small>
+          </div>
+
           <button type="submit" className="submit-btn" disabled={loading}>
-            {loading ? 'Generating...' : 'Generate Blog'}
+            {loading ? "Generating..." : "Generate Blog"}
           </button>
         </form>
 
@@ -188,6 +231,33 @@ Generated: ${new Date().toLocaleString()}
               </button>
             </div>
             <div className="blog-content">{blogContent}</div>
+            {images.length > 0 && (
+              <div className="image-preview">
+                <h3>Generated Images + Metadata</h3>
+
+                {images.map((img) => (
+                  <div key={img.image_url} className="image-card">
+                    <img
+                      src={img.image_url}
+                      alt={img.alt_text || ""}
+                      className="image"
+                    />
+
+                    <div className="image-meta">
+                      <div>
+                        <strong>File name:</strong> {img.file_name}
+                      </div>
+                      <div>
+                        <strong>Title tag:</strong> {img.title_tag}
+                      </div>
+                      <div>
+                        <strong>Alt text:</strong> {img.alt_text}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -196,4 +266,3 @@ Generated: ${new Date().toLocaleString()}
 }
 
 export default App;
-

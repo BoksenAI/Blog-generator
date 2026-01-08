@@ -12,7 +12,7 @@ A modern web application that simplifies blog generation using Google's Gemini A
   - Draft Topic/Title
   - Special Instructions
 - **AI-powered blog generation** using Google Gemini API
-- **Download functionality** to save generated drafts as text files
+- **Download functionality** to save generated drafts as text files 
 - **Modern, responsive UI** with beautiful design
 
 ## Setup
@@ -41,11 +41,35 @@ cd server
 cp .env.example .env
 ```
 
-4. Edit `server/.env` and add your Gemini API key:
+4. Edit `server/.env` and add your API keys:
 ```
-GEMINI_API_KEY=your_gemini_api_key_here
+GROQ_API_KEY=your_groq_api_key_here
 PORT=3001
+
+# Optional: Google Docs API (for creating Google Docs instead of downloading TXT)
+GOOGLE_CLIENT_EMAIL=your-service-account-email@project-id.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 ```
+
+**Optional: Setting up Google Docs API**
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select existing one
+3. Enable **Google Docs API** and **Google Drive API**
+4. Create a **Service Account**:
+   - Go to "IAM & Admin" > "Service Accounts"
+   - Click "Create Service Account"
+   - Give it a name and click "Create"
+   - Skip role assignment (optional)
+   - Click "Done"
+5. Create a key for the service account:
+   - Click on the service account you just created
+   - Go to "Keys" tab > "Add Key" > "Create new key"
+   - Choose "JSON" format
+   - Download the JSON file
+6. Extract credentials from the JSON file:
+   - `client_email` → `GOOGLE_CLIENT_EMAIL`
+   - `private_key` → `GOOGLE_PRIVATE_KEY` (keep the quotes and \n characters)
+7. Share a Google Drive folder with the service account email (so it can create docs)
 
 ### Running the Application
 
@@ -78,7 +102,7 @@ npm run client
    - Draft Topic/Title
    - Special Instructions (optional)
 3. Click "Generate Blog" to create your blog post
-4. Once generated, click "Download Draft" to save the blog as a text file
+4. Once generated, you can click "Download TXT" to download as a text file
 
 ## Project Structure
 

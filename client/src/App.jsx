@@ -41,8 +41,10 @@ function App() {
     setImages([]); // clear old images when generating again
 
     try {
-      const response = await fetch("/api/generate-blog", {
-        method: "POST",
+      // Use VITE_API_URL from environment variables, or default to relative path (for proxy)
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${apiUrl}/api/generate-blog`, {
+        method: 'POST',
         headers: {
           "Content-Type": "application/json",
         },

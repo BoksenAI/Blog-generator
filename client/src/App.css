@@ -193,3 +193,27 @@
     width: 100%;
   }
 }
+
+.image-preview {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.image-card {
+  margin-top: 16px;
+}
+
+.image {
+  width: 100%;
+  max-width: 900px;
+  border-radius: 12px;
+  display: block;
+}
+
+.image-meta {
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  opacity: 0.9;
+}

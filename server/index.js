@@ -3,7 +3,9 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { fetchPexelsImages } from "./services/pexelsService.js";
 import { supabase } from "./supabaseClient.js";
+import { generateImageMetadata } from "./services/imageMetadataService.js";
 
 dotenv.config();
 
@@ -91,6 +93,7 @@ app.post("/api/generate-blog", async (req, res) => {
     if (!venueName || !targetMonth || !weekOfMonth || !creator || !draftTopic) {
       return res.status(400).json({ error: "Missing required fields" });
     }
+
     //If the venue name is Cedros, use the cedrosPrompt
     //if(venueName.toLowerCase() === 'cedros') {
     // const prompt = `You are a professional blog writer. Write a comprehensive blog post based on the following information:
@@ -175,6 +178,7 @@ You are an expert copywriter for 'Eat Me.' Write a blog for ${venueName} targeti
 Format: H1, H2, H3, clean paragraph spacing.`;*/
 
     let blogContent;
+    let blog;
     //const aiProvider = process.env.AI_PROVIDER || 'gemini'; // Options: 'gemini', 'groq', 'huggingface'
     const aiProvider = "groq";
     try {
@@ -246,10 +250,96 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
         throw providerError;
       }
     }
+    // STEP A: Create blog row in Supabase (after blogContent exists)
+    const { data: createdBlog, error: blogError } = await supabase
+      .from("blogs")
+      .insert({
+        venue_name: venueName,
+        target_month: targetMonth,
+        week_of_month: weekOfMonth,
+        creator,
+        draft_topic: draftTopic,
+        special_instructions: specialInstructions || null,
+        blog_content: blogContent,
+        status: "draft",
+      })
+      .select()
+      .single();
+
+    if (blogError) {
+      console.error("Error inserting blog:", blogError);
+      return res.status(500).json({ error: "Failed to create blog" });
+    }
+
+    blog = createdBlog;
+    if (!blog?.id)
+      throw new Error("Blog insert succeeded but blog.id is missing");
+    // STEP B: Fetch image from Pexels
+    const images = await fetchPexelsImages(venueName, 1);
+    const imageUrl = images.length > 0 ? images[0].image_url : null;
+
+    // STEP C: Store image in blog_images
+    if (imageUrl) {
+      const { error: imageError } = await supabase.from("blog_images").insert([
+        {
+          blog_id: blog.id,
+          image_url: imageUrl,
+          image_source: "pexels",
+          section: "hero",
+          is_latest: true,
+        },
+      ]);
+
+      if (imageError) {
+        console.error("Error inserting blog image:", imageError);
+      } else {
+        console.log("Inserted row into blog_images:", {
+          blogId: blog.id,
+          imageUrl,
+        });
+      }
+    }
+    // 1. Fetch latest images for this blog
+    const { data: blogImages, error: imageFetchError } = await supabase
+      .from("blog_images")
+      .select("*")
+      .eq("blog_id", blog.id)
+      .eq("is_latest", true);
+
+    if (imageFetchError) {
+      throw imageFetchError;
+    }
+
+    // 2. Get image metadata master prompt
+    const imageMetadataPrompt = await getMasterPromptByVenue("image_metadata");
+
+    // 3. Generate metadata using AI
+    const imageMetadata = await generateImageMetadata({
+      images: blogImages,
+      blogContext: blogContent,
+      aiProvider: "groq",
+      apiKey: process.env.GROQ_API_KEY,
+      masterPrompt: imageMetadataPrompt,
+    });
+
+    // 4. Save metadata back to Supabase
+    for (const meta of imageMetadata) {
+      await supabase
+        .from("blog_images")
+        .update({
+          file_name: meta.file_name,
+          title_tag: meta.title_tag,
+          alt_text: meta.alt_text,
+          metadata_generated_at: new Date().toISOString(),
+        })
+        .eq("image_url", meta.image_url);
+    }
 
     res.json({
       success: true,
+      blogId: blog.id,
       blogContent,
+      images: imageMetadata, // <-- THIS IS THE KEY CHANGE
       metadata: {
         venueName,
         targetMonth,

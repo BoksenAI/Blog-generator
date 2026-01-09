@@ -96,6 +96,22 @@ app.get("/api/list-models", async (req, res) => {
   }
 });
 
+function buildPexelsQuery({ venueName, draftTopic, specialInstructions }) {
+  // Keep queries short & descriptive — Pexels works best this way
+  let query = `${venueName} restaurant interior Tokyo`;
+
+  if (draftTopic) {
+    query += ` ${draftTopic}`;
+  }
+
+  if (specialInstructions) {
+    query += ` ${specialInstructions}`;
+  }
+
+  // Safety: limit query length
+  return query.slice(0, 120);
+}
+
 // Blog generation endpoint
 app.post("/api/generate-blog", async (req, res) => {
   try {
@@ -245,7 +261,12 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
     if (!blog?.id)
       throw new Error("Blog insert succeeded but blog.id is missing");
     // STEP B: Fetch image from Pexels
-    const images = await fetchPexelsImages(venueName, 1);
+    const pexelsQuery = buildPexelsQuery({
+      venueName,
+      draftTopic,
+      specialInstructions,
+    });
+    const images = await fetchPexelsImages(pexelsQuery, 3);
     const imageUrl = images.length > 0 ? images[0].image_url : null;
 
     // STEP C: Store image in blog_images

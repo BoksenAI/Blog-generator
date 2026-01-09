@@ -16,6 +16,7 @@ function App() {
   const [images, setImages] = useState([]);
   const [blogId, setBlogId] = useState(null);
   const [refreshingSection, setRefreshingSection] = useState(null);
+  const [customQueries, setCustomQueries] = useState({}); // { sectionName: "query string" }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -69,6 +70,13 @@ function App() {
     }
   };
 
+  const handleCustomQueryChange = (section, value) => {
+    setCustomQueries((prev) => ({
+      ...prev,
+      [section]: value,
+    }));
+  };
+
   async function refreshImage(section) {
     if (!blogId) {
       setError("No blogId found yet. Generate a blog first.");
@@ -79,10 +87,12 @@ function App() {
       setRefreshingSection(section);
       setError("");
 
+      const customQuery = customQueries[section]; // Get input value if exists
+
       const resp = await fetch("http://localhost:3001/api/refresh-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ blogId, section }),
+        body: JSON.stringify({ blogId, section, customQuery }),
       });
 
       const data = await resp.json();
@@ -278,16 +288,27 @@ Generated: ${new Date().toLocaleString()}
                         <strong>Alt text:</strong> {img.alt_text}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => refreshImage(img.section)}
-                      disabled={refreshingSection === img.section}
-                      className="refresh-btn"
-                    >
-                      {refreshingSection === img.section
-                        ? "Refreshing..."
-                        : "Refresh image"}
-                    </button>
+                    <div className="refresh-container">
+                      <input
+                        type="text"
+                        placeholder="Custom search query (optional)"
+                        className="custom-query-input"
+                        value={customQueries[img.section] || ""}
+                        onChange={(e) =>
+                          handleCustomQueryChange(img.section, e.target.value)
+                        }
+                      />
+                      <button
+                        type="button"
+                        onClick={() => refreshImage(img.section)}
+                        disabled={refreshingSection === img.section}
+                        className="refresh-btn"
+                      >
+                        {refreshingSection === img.section
+                          ? "Refreshing..."
+                          : "Refresh image"}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

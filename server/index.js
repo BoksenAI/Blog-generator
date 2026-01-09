@@ -379,7 +379,7 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
 
 app.post("/api/refresh-image", async (req, res) => {
   try {
-    const { blogId, section } = req.body;
+    const { blogId, section, customQuery } = req.body;
 
     if (!blogId || !section) {
       return res.status(400).json({ error: "Missing blogId or section" });
@@ -426,12 +426,14 @@ app.post("/api/refresh-image", async (req, res) => {
     }
 
     // D) Fetch candidate images from Pexels (fetch more than 1, then pick a new one)
-    // Use the same query builder you used to fix Issue #1.
-    const pexelsQuery = buildPexelsQuery({
-      venueName: blog.venue_name,
-      draftTopic: blog.draft_topic,
-      specialInstructions: blog.special_instructions,
-    });
+    // Use customQuery if provided, otherwise build one from blog context
+    const pexelsQuery = customQuery
+      ? customQuery
+      : buildPexelsQuery({
+        venueName: blog.venue_name,
+        draftTopic: blog.draft_topic,
+        specialInstructions: blog.special_instructions,
+      });
 
     const candidates = await fetchPexelsImages(pexelsQuery, 8); // fetch several to reduce duplicates
     const picked = (candidates || []).find(
@@ -475,11 +477,10 @@ ${imageMetadataMasterPrompt}
 Blog context:
 - Venue: ${blog.venue_name}
 - Draft topic: ${blog.draft_topic}
-${
-  blog.special_instructions
-    ? `- Special instructions: ${blog.special_instructions}`
-    : ""
-}
+${blog.special_instructions
+        ? `- Special instructions: ${blog.special_instructions}`
+        : ""
+      }
 
 Generate metadata for this ONE image:
 image_url: ${inserted.image_url}

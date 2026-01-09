@@ -42,9 +42,9 @@ function App() {
 
     try {
       // Use VITE_API_URL from environment variables, or default to relative path (for proxy)
-      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const apiUrl = import.meta.env.VITE_API_URL || "";
       const response = await fetch(`${apiUrl}/api/generate-blog`, {
-        method: 'POST',
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
@@ -78,10 +78,6 @@ Target Month: ${formData.targetMonth}
 Week of Month: ${formData.weekOfMonth}
 Creator: ${formData.creator}
 Draft Topic/Title: ${formData.draftTopic}
-${formData.specialInstructions
-        ? `Special Instructions: ${formData.specialInstructions}`
-        : ""
-      }
 Generated: ${new Date().toLocaleString()}
 
 ---
@@ -93,8 +89,6 @@ Generated: ${new Date().toLocaleString()}
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `blog-draft-${formData.venueName}-${formData.targetMonth
-      }-${Date.now()}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

@@ -162,7 +162,6 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
   ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
   `;
 
-
     let blogContent;
     let blog;
     //const aiProvider = process.env.AI_PROVIDER || 'gemini'; // Options: 'gemini', 'groq', 'huggingface'
@@ -266,28 +265,31 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
       draftTopic,
       specialInstructions,
     });
+
     const images = await fetchPexelsImages(pexelsQuery, 3);
-    const imageUrl = images.length > 0 ? images[0].image_url : null;
 
-    // STEP C: Store image in blog_images
-    if (imageUrl) {
-      const { error: imageError } = await supabase.from("blog_images").insert([
-        {
-          blog_id: blog.id,
-          image_url: imageUrl,
-          image_source: "pexels",
-          section: "hero",
-          is_latest: true,
-        },
-      ]);
+    // STEP C: Store ALL images in blog_images
+    if (!images || images.length === 0) {
+      console.log(
+        "No images returned from Pexels, skipping blog_images insert"
+      );
+    } else {
+      const rowsToInsert = images.map((img, index) => ({
+        blog_id: blog.id,
+        image_url: img.image_url,
+        image_source: "pexels",
+        section: index === 0 ? "hero" : `gallery_${index}`, // hero + gallery_1, gallery_2...
+        is_latest: true,
+      }));
 
-      if (imageError) {
-        console.error("Error inserting blog image:", imageError);
+      const { error: insertImagesError } = await supabase
+        .from("blog_images")
+        .insert(rowsToInsert);
+
+      if (insertImagesError) {
+        console.error("Error inserting multiple images:", insertImagesError);
       } else {
-        console.log("Inserted row into blog_images:", {
-          blogId: blog.id,
-          imageUrl,
-        });
+        console.log("Inserted images into blog_images:", rowsToInsert.length);
       }
     }
     // 1. Fetch latest images for this blog
@@ -326,11 +328,24 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
         .eq("image_url", meta.image_url);
     }
 
+    const { data: finalImages, error: finalImagesError } = await supabase
+      .from("blog_images")
+      .select(
+        "image_url, file_name, title_tag, alt_text, section, is_latest, created_at"
+      )
+      .eq("blog_id", blog.id)
+      .eq("is_latest", true)
+      .order("created_at", { ascending: true });
+
+    if (finalImagesError) {
+      console.error("Error fetching final images:", finalImagesError);
+    }
+
     res.json({
       success: true,
       blogId: blog.id,
       blogContent,
-      images: imageMetadata, // <-- THIS IS THE KEY CHANGE
+      images: finalImages || [],
       metadata: {
         venueName,
         targetMonth,

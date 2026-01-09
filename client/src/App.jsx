@@ -89,6 +89,7 @@ Generated: ${new Date().toLocaleString()}
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
+    a.download = `${formData.venueName.replace(/\s+/g, "_")}_Draft.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

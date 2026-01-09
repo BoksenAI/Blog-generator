@@ -34,6 +34,24 @@ async function getMasterPromptByVenue(venue) {
   return data.prompt;
 }
 
+// Helper function to fetch venue specific prompt from Supabase
+async function getVenueSpecificPrompt(venue) {
+  const { data, error } = await supabase
+    .from("venue-prompt")
+    .select("prompt")
+    .eq("id", venue.toLowerCase()) // Assuming 'id' is the venue name based on screenshot
+    .maybeSingle();
+
+  console.log("Looking for venue ID:", venue.toLowerCase());
+
+  if (error) {
+    console.warn(`Error fetching specific prompt for venue ${venue}:`, error);
+    return null;
+  }
+  console.log("id", venue.toLowerCase());
+  return data ? data.prompt : null;
+}
+
 // Initialize AI providers
 const genAI = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
@@ -93,20 +111,41 @@ app.post("/api/generate-blog", async (req, res) => {
     if (!venueName || !targetMonth || !weekOfMonth || !creator || !draftTopic) {
       return res.status(400).json({ error: "Missing required fields" });
     }
+    //Master Prompt↓
+    /* `You are a professional blog writer. Write a comprehensive blog post based on the following information:
+Venue Name: ${venueName}
+Target Month: ${targetMonth}
+Week of Month: ${weekOfMonth}
+Creator: ${creator}
+Draft Topic/Title: ${draftTopic}
+${specialInstructions ? `Special Instructions: ${specialInstructions}` : ''}
 
-    // Create the prompt using master prompt from Supabase
-    const masterPrompt = await getMasterPromptByVenue("blog_generation");
+You are an expert copywriter for 'Eat Me.' Write a blog for ${venueName} targeting rich tourists in Tokyo. CRITICAL RULES:
+1. Never use em dashes (—). Use commas or periods instead. 2.Define any Japanese cultural terms (e.g., yōshoku) in line.
+3.Tone: Sophisticated, welcoming, and high-end. 4.Use these ${specialInstructions ? `Special Instructions: ${specialInstructions}` : 'standard guidelines'}...
+Format: H1, H2, H3, clean paragraph spacing.`;*/
+
+    // 1. Try to get a specific prompt for the venue
+    let masterPrompt = await getVenueSpecificPrompt(venueName);
+    /*if (masterPrompt) {
+      console.log("First letter of prompt:", masterPrompt.charAt(68));
+    }*/
+    // 2. If no specific prompt, fall back to the default master prompt
+    if (!masterPrompt) {
+      console.log(`No specific prompt found for ${venueName}, using default.`);
+      masterPrompt = await getMasterPromptByVenue("blog_generation");
+    }
 
     const prompt = `
-    ${masterPrompt}
+  ${masterPrompt} 
+  Venue Name: ${venueName}
+  Target Month: ${targetMonth}
+  Week of Month: ${weekOfMonth}
+  Creator: ${creator}
+  Draft Topic: ${draftTopic}
+  ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
+  `;
 
-    Venue Name: ${venueName}
-    Target Month: ${targetMonth}
-    Week of Month: ${weekOfMonth}
-    Creator: ${creator}
-    Draft Topic: ${draftTopic}
-    ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
-    `;
 
     let blogContent;
     let blog;

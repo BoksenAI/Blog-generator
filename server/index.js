@@ -34,6 +34,24 @@ async function getMasterPromptByVenue(venue) {
   return data.prompt;
 }
 
+// Helper function to fetch venue specific prompt from Supabase
+async function getVenueSpecificPrompt(venue) {
+  const { data, error } = await supabase
+    .from("venue-prompt")
+    .select("prompt")
+    .eq("id", venue.toLowerCase()) // Assuming 'id' is the venue name based on screenshot
+    .maybeSingle();
+
+  console.log("Looking for venue ID:", venue.toLowerCase());
+
+  if (error) {
+    console.warn(`Error fetching specific prompt for venue ${venue}:`, error);
+    return null;
+  }
+  console.log("id", venue.toLowerCase());
+  return data ? data.prompt : null;
+}
+
 // Initialize AI providers
 const genAI = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
@@ -93,78 +111,8 @@ app.post("/api/generate-blog", async (req, res) => {
     if (!venueName || !targetMonth || !weekOfMonth || !creator || !draftTopic) {
       return res.status(400).json({ error: "Missing required fields" });
     }
-
-    //If the venue name is Cedros, use the cedrosPrompt
-    //if(venueName.toLowerCase() === 'cedros') {
-    // const prompt = `You are a professional blog writer. Write a comprehensive blog post based on the following information:
-    // Venue Name: ${venueName}
-    // Target Month: ${targetMonth}
-    // Week of Month: ${weekOfMonth}
-    // Creator: ${creator}
-    // Draft Topic/Title: ${draftTopic}
-    // ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
-
-    // You are an expert copywriter for 'Eat Me.' Write a blog for ${venueName} targeting rich tourists in Tokyo. CRITICAL RULES:
-    // 1. Never use em dashes (—). Use commas or periods instead. 2.Define any Japanese cultural terms (e.g., yōshoku) in line.
-    // 3.Tone: Sophisticated, welcoming, and high-end. 4.Use these ${
-    //   specialInstructions
-    //     ? `Special Instructions: ${specialInstructions}`
-    //     : "standard guidelines"
-    // }...
-    // Format: H1, H2, H3, clean paragraph spacing.
-
-    // Title: Should include keywords to maximise SEO, but sound natural. Length: 1,500 to2,000 words Mention of Cedros: No more than once, ideally in the middle or final third of the article
-    // CTA: Blend into the ending naturally (e.g., “Whether you find yourself at Cabin or a calm spot like Cedros, the key is slowing down and savoring it.”)Tone and Purpose:
-    // Tone and Purpose:'
-    // 🧭 Suggested Major Sections (SEO-friendly layout):
-    //   1.	Intro: Set up the reader journey — craving calm, familiarity, and good taste in Tokyo
-    //   2.	Examples of Venues (mention 2 to 4, including Cedros once. Look up online to check that the suggested restaurants exists and are operational.)
-    //   3.	Tips for Eating Out in Tokyo as a Foreigner, related to the article.
-    //   4.	Conclusion section that's not too long with a Subtle CTA (Don't name this secti
-    // s is better described by the following:
-    // Calm atmosphere, low-key environment.
-    // Gentle and refined lighting.
-    // Feels both homey and fancy at the same time.
-    // Staff felt like they already knew me.
-    // Food was exquisitely put together engineered to perfection.
-    // Every element was thought through for a wonderful experience.
-    // Not too full, not hungry perfect amount of food.
-    // It wasn't just taste or stuffing myself; it was a balance.
-    // Made me thoughtful about how I ate and drank.
-    // A refined but homey place.
-
-    // A place where you could get lost in conversation.
-    // Everything done with care, professionalism, and purpose.
-    // Staff treated their jobs with serious intention part of something bigger.
-    // Intimate restaurant (not a bar).
-    // Never crowded, no loud buzz of people.
-    // A place for quiet indulgence and intimate conversation.
-    // Quiet that felt invigorating.
-    // A perfect blend of Southern California flavors like tostadas and tacos with subtle touches of Japanese cuisine.
-    // Seafood dishes that offer a fresh and surprising experience, even for Japanese guests.
-    // While Japan often focuses on wagyu, Cedros highlights the richness of Japan’s seafood — a true seafood-forward restaurant.
-    // The warm hospitality and chill atmosphere make it a uniquely relaxing experience, even in the heart of Japan.
-    // Very cozy and laid back
-    // California fusion that blends Japanese ingredients with a western touch.
-    // Feels more like California than Tokyo.
-    // Kind of like hanging out in your friend or family living room.
-    // As for the tostada, it is also a guest favorite, but we switch up the toppings monthly with seasonal ingredients like Thai fish or firefly squid. Would love it if we could include a note that many of our ingredients change with the seasons.
-    // For lobster risotto, it would be great if we could mention that it is been one of our most popular signature.
-    // Also, the example product is like this website:https://eatme.co.jp/the-great-tokyo-food-plot-twist-when-restaurants-arent-what-they-seem/`;
-
-    const masterPrompt = await getMasterPromptByVenue("blog_generation");
-
-    const prompt = `
-  ${masterPrompt} 
-  Venue Name: ${venueName}
-  Target Month: ${targetMonth}
-  Week of Month: ${weekOfMonth}
-  Creator: ${creator}
-  Draft Topic: ${draftTopic}
-  ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
-  `;
-
-    /*const prompt = `You are a professional blog writer. Write a comprehensive blog post based on the following information:
+    //Master Prompt↓
+    /* `You are a professional blog writer. Write a comprehensive blog post based on the following information:
 Venue Name: ${venueName}
 Target Month: ${targetMonth}
 Week of Month: ${weekOfMonth}
@@ -176,6 +124,28 @@ You are an expert copywriter for 'Eat Me.' Write a blog for ${venueName} targeti
 1. Never use em dashes (—). Use commas or periods instead. 2.Define any Japanese cultural terms (e.g., yōshoku) in line.
 3.Tone: Sophisticated, welcoming, and high-end. 4.Use these ${specialInstructions ? `Special Instructions: ${specialInstructions}` : 'standard guidelines'}...
 Format: H1, H2, H3, clean paragraph spacing.`;*/
+
+    // 1. Try to get a specific prompt for the venue
+    let masterPrompt = await getVenueSpecificPrompt(venueName);
+    /*if (masterPrompt) {
+      console.log("First letter of prompt:", masterPrompt.charAt(68));
+    }*/
+    // 2. If no specific prompt, fall back to the default master prompt
+    if (!masterPrompt) {
+      console.log(`No specific prompt found for ${venueName}, using default.`);
+      masterPrompt = await getMasterPromptByVenue("blog_generation");
+    }
+
+    const prompt = `
+  ${masterPrompt} 
+  Venue Name: ${venueName}
+  Target Month: ${targetMonth}
+  Week of Month: ${weekOfMonth}
+  Creator: ${creator}
+  Draft Topic: ${draftTopic}
+  ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
+  `;
+
 
     let blogContent;
     let blog;

@@ -38,7 +38,7 @@ async function getMasterPromptByVenue(venue) {
 async function getVenueSpecificPrompt(venue) {
   const { data, error } = await supabase
     .from("venue-prompt")
-    .select("prompt")
+    .select("prompt, website") // Fetch website as well
     .eq("id", venue.toLowerCase()) // Assuming 'id' is the venue name based on screenshot
     .maybeSingle();
 
@@ -49,7 +49,7 @@ async function getVenueSpecificPrompt(venue) {
     return null;
   }
   console.log("id", venue.toLowerCase());
-  return data ? data.prompt : null;
+  return data ? { prompt: data.prompt, website: data.website } : null;
 }
 
 // Initialize AI providers
@@ -142,16 +142,19 @@ You are an expert copywriter for 'Eat Me.' Write a blog for ${venueName} targeti
 Format: H1, H2, H3, clean paragraph spacing.`;*/
 
     // 1. Try to get a specific prompt for the venue
-    let masterPrompt = await getVenueSpecificPrompt(venueName);
+    let venueData = await getVenueSpecificPrompt(venueName);
+    let masterPrompt = venueData?.prompt;
+    let venueWebsite = venueData?.website;
+
     /*if (masterPrompt) {
-      console.log("First letter of prompt:", masterPrompt.charAt(68));
+      console.log("First letter of prompt:", masterPrompt.charAt(66));
     }*/
     // 2. If no specific prompt, fall back to the default master prompt
     if (!masterPrompt) {
       console.log(`No specific prompt found for ${venueName}, using default.`);
       masterPrompt = await getMasterPromptByVenue("blog_generation");
     }
-
+    //Master Prompt+user inputs↓
     const prompt = `
   ${masterPrompt} 
   Venue Name: ${venueName}
@@ -159,6 +162,10 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
   Week of Month: ${weekOfMonth}
   Creator: ${creator}
   Draft Topic: ${draftTopic}
+  ${venueWebsite ? `Venue Website: ${venueWebsite}
+  MANDATORY REQUIREMENT: 
+  1. You MUST include a Markdown hyperlink to the venue website at the end of the blog. Format: [${venueName}](${venueWebsite}).
+  2. FOCUS ONLY on ${venueName}. Do NOT list or mention other venues. Do NOT create a 'Resources' section with other links.` : ""}
   ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
   `;
 

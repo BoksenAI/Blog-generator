@@ -216,3 +216,18 @@
   font-size: 14px;
   line-height: 1.5;
   opacity: 0.9;
+}
+
+.refresh-btn {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: white;
+  cursor: pointer;
+}
+
+.refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

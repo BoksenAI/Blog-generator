@@ -14,6 +14,8 @@ function App() {
 
   const [blogContent, setBlogContent] = useState("");
   const [images, setImages] = useState([]);
+  const [blogId, setBlogId] = useState(null);
+  const [refreshingSection, setRefreshingSection] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -59,12 +61,40 @@ function App() {
 
       setBlogContent(data.blogContent);
       setImages(data.images || []); // <-- save images + metadata returned from backend
+      setBlogId(data.blogId);
     } catch (err) {
       setError(err.message || "An error occurred while generating the blog");
     } finally {
       setLoading(false);
     }
   };
+
+  async function refreshImage(section) {
+    if (!blogId) {
+      setError("No blogId found yet. Generate a blog first.");
+      return;
+    }
+
+    try {
+      setRefreshingSection(section);
+      setError("");
+
+      const resp = await fetch("http://localhost:3001/api/refresh-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blogId, section }),
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Failed to refresh image");
+
+      setImages(data.images || []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRefreshingSection(null);
+    }
+  }
 
   const downloadDraft = () => {
     if (!blogContent) {
@@ -248,6 +278,16 @@ Generated: ${new Date().toLocaleString()}
                         <strong>Alt text:</strong> {img.alt_text}
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => refreshImage(img.section)}
+                      disabled={refreshingSection === img.section}
+                      className="refresh-btn"
+                    >
+                      {refreshingSection === img.section
+                        ? "Refreshing..."
+                        : "Refresh image"}
+                    </button>
                   </div>
                 ))}
               </div>

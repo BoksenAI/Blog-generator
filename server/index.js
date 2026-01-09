@@ -34,6 +34,19 @@ async function getMasterPromptByVenue(venue) {
   return data.prompt;
 }
 
+// Helper function to extract first JSON object from text
+function extractFirstJsonObject(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  const slice = text.slice(start, end + 1);
+  try {
+    return JSON.parse(slice);
+  } catch {
+    return null;
+  }
+}
+
 // Helper function to fetch venue specific prompt from Supabase
 async function getVenueSpecificPrompt(venue) {
   const { data, error } = await supabase
@@ -361,6 +374,206 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
       error: "Failed to generate blog",
       message: error.message,
     });
+  }
+});
+
+app.post("/api/refresh-image", async (req, res) => {
+  try {
+    const { blogId, section } = req.body;
+
+    if (!blogId || !section) {
+      return res.status(400).json({ error: "Missing blogId or section" });
+    }
+
+    // A) Get blog context to build a good Pexels query
+    const { data: blog, error: blogFetchError } = await supabase
+      .from("blogs")
+      .select("venue_name, draft_topic, special_instructions")
+      .eq("id", blogId)
+      .single();
+
+    if (blogFetchError || !blog) {
+      console.error("Error fetching blog:", blogFetchError);
+      return res.status(404).json({ error: "Blog not found" });
+    }
+
+    // B) Get all previously-used image URLs for this blog (to avoid duplicates)
+    const { data: allImages, error: allImagesError } = await supabase
+      .from("blog_images")
+      .select("image_url")
+      .eq("blog_id", blogId);
+
+    if (allImagesError) {
+      console.error("Error fetching existing images:", allImagesError);
+      return res.status(500).json({ error: "Failed to fetch existing images" });
+    }
+
+    const usedUrls = new Set(
+      (allImages || []).map((r) => r.image_url).filter(Boolean)
+    );
+
+    // C) Mark current latest image(s) for THIS section as not latest
+    const { error: markOldError } = await supabase
+      .from("blog_images")
+      .update({ is_latest: false })
+      .eq("blog_id", blogId)
+      .eq("section", section)
+      .eq("is_latest", true);
+
+    if (markOldError) {
+      console.error("Error marking old images:", markOldError);
+      return res.status(500).json({ error: "Failed to mark old images" });
+    }
+
+    // D) Fetch candidate images from Pexels (fetch more than 1, then pick a new one)
+    // Use the same query builder you used to fix Issue #1.
+    const pexelsQuery = buildPexelsQuery({
+      venueName: blog.venue_name,
+      draftTopic: blog.draft_topic,
+      specialInstructions: blog.special_instructions,
+    });
+
+    const candidates = await fetchPexelsImages(pexelsQuery, 8); // fetch several to reduce duplicates
+    const picked = (candidates || []).find(
+      (img) => img?.image_url && !usedUrls.has(img.image_url)
+    );
+
+    // fallback: if everything is used, pick the first candidate (rare)
+    const newImageUrl = picked?.image_url || candidates?.[0]?.image_url || null;
+
+    if (!newImageUrl) {
+      return res.status(500).json({ error: "No new image found from Pexels" });
+    }
+
+    // E) Insert the new image row
+    const { data: inserted, error: insertError } = await supabase
+      .from("blog_images")
+      .insert({
+        blog_id: blogId,
+        image_url: newImageUrl,
+        image_source: "pexels",
+        section: section,
+        is_latest: true,
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error("Error inserting refreshed image:", insertError);
+      return res.status(500).json({ error: "Failed to insert new image" });
+    }
+
+    // F) Generate metadata for ONLY this new image
+    // IMPORTANT: use the same master prompt key you already use in /api/generate-blog for metadata
+    const imageMetadataMasterPrompt = await getMasterPromptByVenue(
+      "image_metadata"
+    );
+
+    const metadataPrompt = `
+${imageMetadataMasterPrompt}
+
+Blog context:
+- Venue: ${blog.venue_name}
+- Draft topic: ${blog.draft_topic}
+${
+  blog.special_instructions
+    ? `- Special instructions: ${blog.special_instructions}`
+    : ""
+}
+
+Generate metadata for this ONE image:
+image_url: ${inserted.image_url}
+section: ${inserted.section}
+
+Return ONLY a JSON object with keys:
+file_name, title_tag, alt_text
+`.trim();
+
+    let metaText = "";
+
+    // Use your existing provider preference (same style as your generate endpoint)
+    if (process.env.GROQ_API_KEY) {
+      const resp = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "llama-3.1-8b-instant",
+            messages: [{ role: "user", content: metadataPrompt }],
+            temperature: 0.3,
+            max_tokens: 700,
+          }),
+        }
+      );
+
+      if (!resp.ok) {
+        const err = await resp.text();
+        console.error("Groq metadata error:", err);
+        return res
+          .status(500)
+          .json({ error: "Metadata generation failed (Groq)" });
+      }
+
+      const json = await resp.json();
+      metaText = json?.choices?.[0]?.message?.content || "";
+    } else if (genAI) {
+      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+      const result = await model.generateContent(metadataPrompt);
+      metaText = result.response.text();
+    } else {
+      return res
+        .status(500)
+        .json({ error: "No AI provider configured for metadata" });
+    }
+
+    const meta = extractFirstJsonObject(metaText);
+
+    if (!meta) {
+      console.error("Metadata JSON parse failed. Raw output:", metaText);
+      return res.status(500).json({ error: "Failed to parse metadata JSON" });
+    }
+
+    // G) Update the inserted image row with metadata
+    const { error: updateError } = await supabase
+      .from("blog_images")
+      .update({
+        file_name: meta.file_name || null,
+        title_tag: meta.title_tag || null,
+        alt_text: meta.alt_text || null,
+        metadata_generated_at: new Date().toISOString(),
+      })
+      .eq("id", inserted.id);
+
+    if (updateError) {
+      console.error("Error updating image metadata:", updateError);
+      return res.status(500).json({ error: "Failed to update image metadata" });
+    }
+
+    // H) Return updated latest images for UI
+    const { data: latestImages, error: latestError } = await supabase
+      .from("blog_images")
+      .select(
+        "id, image_url, image_source, section, file_name, title_tag, alt_text, is_latest, created_at, metadata_generated_at"
+      )
+      .eq("blog_id", blogId)
+      .eq("is_latest", true)
+      .order("created_at", { ascending: true });
+
+    if (latestError) {
+      console.error("Error fetching latest images:", latestError);
+      return res.status(500).json({ error: "Failed to fetch latest images" });
+    }
+
+    return res.json({ success: true, images: latestImages || [] });
+  } catch (err) {
+    console.error("Refresh image error:", err);
+    return res
+      .status(500)
+      .json({ error: "Refresh image failed", message: err.message });
   }
 });
 

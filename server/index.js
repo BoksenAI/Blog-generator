@@ -177,10 +177,14 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
   Week of Month: ${weekOfMonth}
   Creator: ${creator}
   Draft Topic: ${draftTopic}
-  ${venueWebsite ? `Venue Website: ${venueWebsite}
+  ${
+    venueWebsite
+      ? `Venue Website: ${venueWebsite}
   MANDATORY REQUIREMENT: 
   1. You MUST include a Markdown hyperlink to the venue website at the end of the blog. Format: [${venueName}](${venueWebsite}).
-  2. FOCUS ONLY on ${venueName}. Do NOT list or mention other venues. Do NOT create a 'Resources' section with other links.` : ""}
+  2. FOCUS ONLY on ${venueName}. Do NOT list or mention other venues. Do NOT create a 'Resources' section with other links.`
+      : ""
+  }
   ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
   `;
 
@@ -299,6 +303,7 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
     } else {
       const rowsToInsert = images.map((img, index) => ({
         blog_id: blog.id,
+        user_id: blog.user_id,
         image_url: img.image_url,
         image_source: "pexels",
         section: index === 0 ? "hero" : `gallery_${index}`, // hero + gallery_1, gallery_2...
@@ -398,7 +403,7 @@ app.post("/api/refresh-image", async (req, res) => {
     // A) Get blog context to build a good Pexels query
     const { data: blog, error: blogFetchError } = await supabase
       .from("blogs")
-      .select("venue_name, draft_topic, special_instructions")
+      .select("venue_name, draft_topic, special_instructions, user_id")
       .eq("id", blogId)
       .single();
 
@@ -440,10 +445,10 @@ app.post("/api/refresh-image", async (req, res) => {
     const pexelsQuery = customQuery
       ? customQuery
       : buildPexelsQuery({
-        venueName: blog.venue_name,
-        draftTopic: blog.draft_topic,
-        specialInstructions: blog.special_instructions,
-      });
+          venueName: blog.venue_name,
+          draftTopic: blog.draft_topic,
+          specialInstructions: blog.special_instructions,
+        });
 
     const candidates = await fetchPexelsImages(pexelsQuery, 8); // fetch several to reduce duplicates
     const picked = (candidates || []).find(
@@ -462,6 +467,7 @@ app.post("/api/refresh-image", async (req, res) => {
       .from("blog_images")
       .insert({
         blog_id: blogId,
+        user_id: blog.user_id,
         image_url: newImageUrl,
         image_source: "pexels",
         section: section,
@@ -487,10 +493,11 @@ ${imageMetadataMasterPrompt}
 Blog context:
 - Venue: ${blog.venue_name}
 - Draft topic: ${blog.draft_topic}
-${blog.special_instructions
-        ? `- Special instructions: ${blog.special_instructions}`
-        : ""
-      }
+${
+  blog.special_instructions
+    ? `- Special instructions: ${blog.special_instructions}`
+    : ""
+}
 
 Generate metadata for this ONE image:
 image_url: ${inserted.image_url}

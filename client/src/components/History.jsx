@@ -2,11 +2,13 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "../supabase";
 import "./History.css";
+import BlogDetails from "./BlogDetails";
 
 const History = ({ session, onBack }) => {
     const [blogs, setBlogs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [selectedBlogId, setSelectedBlogId] = useState(null);
 
     useEffect(() => {
         fetchHistory();
@@ -46,6 +48,18 @@ const History = ({ session, onBack }) => {
         });
     };
 
+    const handleBlogClick = (blogId) => {
+        setSelectedBlogId(blogId);
+    };
+
+    const handleBackToHistory = () => {
+        setSelectedBlogId(null);
+    };
+
+    if (selectedBlogId) {
+        return <BlogDetails blogId={selectedBlogId} onBack={handleBackToHistory} />;
+    }
+
     return (
         <div className="history-container">
             <div className="history-header">
@@ -67,7 +81,11 @@ const History = ({ session, onBack }) => {
             ) : (
                 <div className="blogs-grid">
                     {blogs.map((blog) => (
-                        <div key={blog.id} className="blog-card">
+                        <div
+                            key={blog.id}
+                            className="blog-card"
+                            onClick={() => handleBlogClick(blog.id)}
+                        >
                             <div className="blog-card-header">
                                 <h3>{blog.venue_name}</h3>
                                 <span className={`status ${blog.status}`}>{blog.status}</span>
@@ -77,7 +95,6 @@ const History = ({ session, onBack }) => {
                                 <p><strong>Created:</strong> {formatDate(blog.created_at)}</p>
                                 <p><strong>Month:</strong> {blog.target_month}</p>
                             </div>
-                            {/* Future: Add View/Edit/Delete buttons */}
                         </div>
                     ))}
                 </div>

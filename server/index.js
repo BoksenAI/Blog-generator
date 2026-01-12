@@ -6,6 +6,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { fetchPexelsImages } from "./services/pexelsService.js";
 import { supabase } from "./supabaseClient.js";
 import { generateImageMetadata } from "./services/imageMetadataService.js";
+import { authMiddleware, requireAuth } from "./middleware/auth.js";
 
 dotenv.config();
 
@@ -14,6 +15,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+app.use(authMiddleware);
 
 // Helper function to insert blog content into Supabase
 async function getMasterPromptByVenue(venue) {
@@ -267,6 +269,7 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
         special_instructions: specialInstructions || null,
         blog_content: blogContent,
         status: "draft",
+        user_id: req.user ? req.user.id : null,
       })
       .select()
       .single();
@@ -582,6 +585,23 @@ file_name, title_tag, alt_text
     return res
       .status(500)
       .json({ error: "Refresh image failed", message: err.message });
+  }
+});
+
+app.get("/api/my-blogs", requireAuth, async (req, res) => {
+  try {
+    const { data: blogs, error } = await supabase
+      .from("blogs")
+      .select("id, venue_name, draft_topic, status, created_at, target_month")
+      .eq("user_id", req.user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ blogs });
+  } catch (err) {
+    console.error("Fetch history error:", err);
+    res.status(500).json({ error: "Failed to fetch history" });
   }
 });
 

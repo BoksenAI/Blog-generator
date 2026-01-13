@@ -6,6 +6,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { fetchPexelsImages } from "./services/pexelsService.js";
 import { supabase } from "./supabaseClient.js";
 import { generateImageMetadata } from "./services/imageMetadataService.js";
+import { authMiddleware, requireAuth } from "./middleware/auth.js";
 
 dotenv.config();
 
@@ -14,6 +15,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+app.use(authMiddleware);
 
 // Helper function to insert blog content into Supabase
 async function getMasterPromptByVenue(venue) {
@@ -34,11 +36,24 @@ async function getMasterPromptByVenue(venue) {
   return data.prompt;
 }
 
+// Helper function to extract first JSON object from text
+function extractFirstJsonObject(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  const slice = text.slice(start, end + 1);
+  try {
+    return JSON.parse(slice);
+  } catch {
+    return null;
+  }
+}
+
 // Helper function to fetch venue specific prompt from Supabase
 async function getVenueSpecificPrompt(venue) {
   const { data, error } = await supabase
     .from("venue-prompt")
-    .select("prompt")
+    .select("prompt, website") // Fetch website as well
     .eq("id", venue.toLowerCase()) // Assuming 'id' is the venue name based on screenshot
     .maybeSingle();
 
@@ -49,7 +64,7 @@ async function getVenueSpecificPrompt(venue) {
     return null;
   }
   console.log("id", venue.toLowerCase());
-  return data ? data.prompt : null;
+  return data ? { prompt: data.prompt, website: data.website } : null;
 }
 
 // Initialize AI providers
@@ -142,16 +157,19 @@ You are an expert copywriter for 'Eat Me.' Write a blog for ${venueName} targeti
 Format: H1, H2, H3, clean paragraph spacing.`;*/
 
     // 1. Try to get a specific prompt for the venue
-    let masterPrompt = await getVenueSpecificPrompt(venueName);
+    let venueData = await getVenueSpecificPrompt(venueName);
+    let masterPrompt = venueData?.prompt;
+    let venueWebsite = venueData?.website;
+
     /*if (masterPrompt) {
-      console.log("First letter of prompt:", masterPrompt.charAt(68));
+      console.log("First letter of prompt:", masterPrompt.charAt(66));
     }*/
     // 2. If no specific prompt, fall back to the default master prompt
     if (!masterPrompt) {
       console.log(`No specific prompt found for ${venueName}, using default.`);
       masterPrompt = await getMasterPromptByVenue("blog_generation");
     }
-
+    //Master Prompt+user inputs↓
     const prompt = `
   ${masterPrompt} 
   Venue Name: ${venueName}
@@ -159,9 +177,15 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
   Week of Month: ${weekOfMonth}
   Creator: ${creator}
   Draft Topic: ${draftTopic}
+  ${venueWebsite
+        ? `Venue Website: ${venueWebsite}
+  MANDATORY REQUIREMENT: 
+  1. You MUST include a Markdown hyperlink to the venue website at the end of the blog. Format: [${venueName}](${venueWebsite}).
+  2. FOCUS ONLY on ${venueName}. Do NOT list or mention other venues. Do NOT create a 'Resources' section with other links.`
+        : ""
+      }
   ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
   `;
-
 
     let blogContent;
     let blog;
@@ -248,6 +272,7 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
         special_instructions: specialInstructions || null,
         blog_content: blogContent,
         status: "draft",
+        user_id: req.user ? req.user.id : null,
       })
       .select()
       .single();
@@ -266,28 +291,32 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
       draftTopic,
       specialInstructions,
     });
+
     const images = await fetchPexelsImages(pexelsQuery, 3);
-    const imageUrl = images.length > 0 ? images[0].image_url : null;
 
-    // STEP C: Store image in blog_images
-    if (imageUrl) {
-      const { error: imageError } = await supabase.from("blog_images").insert([
-        {
-          blog_id: blog.id,
-          image_url: imageUrl,
-          image_source: "pexels",
-          section: "hero",
-          is_latest: true,
-        },
-      ]);
+    // STEP C: Store ALL images in blog_images
+    if (!images || images.length === 0) {
+      console.log(
+        "No images returned from Pexels, skipping blog_images insert"
+      );
+    } else {
+      const rowsToInsert = images.map((img, index) => ({
+        blog_id: blog.id,
+        user_id: blog.user_id,
+        image_url: img.image_url,
+        image_source: "pexels",
+        section: index === 0 ? "hero" : `gallery_${index}`, // hero + gallery_1, gallery_2...
+        is_latest: true,
+      }));
 
-      if (imageError) {
-        console.error("Error inserting blog image:", imageError);
+      const { error: insertImagesError } = await supabase
+        .from("blog_images")
+        .insert(rowsToInsert);
+
+      if (insertImagesError) {
+        console.error("Error inserting multiple images:", insertImagesError);
       } else {
-        console.log("Inserted row into blog_images:", {
-          blogId: blog.id,
-          imageUrl,
-        });
+        console.log("Inserted images into blog_images:", rowsToInsert.length);
       }
     }
     // 1. Fetch latest images for this blog
@@ -326,11 +355,24 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
         .eq("image_url", meta.image_url);
     }
 
+    const { data: finalImages, error: finalImagesError } = await supabase
+      .from("blog_images")
+      .select(
+        "image_url, file_name, title_tag, alt_text, section, is_latest, created_at"
+      )
+      .eq("blog_id", blog.id)
+      .eq("is_latest", true)
+      .order("created_at", { ascending: true });
+
+    if (finalImagesError) {
+      console.error("Error fetching final images:", finalImagesError);
+    }
+
     res.json({
       success: true,
       blogId: blog.id,
       blogContent,
-      images: imageMetadata, // <-- THIS IS THE KEY CHANGE
+      images: finalImages || [],
       metadata: {
         venueName,
         targetMonth,
@@ -346,6 +388,294 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
       error: "Failed to generate blog",
       message: error.message,
     });
+  }
+});
+
+app.post("/api/refresh-image", async (req, res) => {
+  try {
+    const { blogId, section, customQuery } = req.body;
+
+    if (!blogId || !section) {
+      return res.status(400).json({ error: "Missing blogId or section" });
+    }
+
+    // A) Get blog context to build a good Pexels query
+    const { data: blog, error: blogFetchError } = await supabase
+      .from("blogs")
+      .select("venue_name, draft_topic, special_instructions, user_id")
+      .eq("id", blogId)
+      .single();
+
+    if (blogFetchError || !blog) {
+      console.error("Error fetching blog:", blogFetchError);
+      return res.status(404).json({ error: "Blog not found" });
+    }
+
+    // B) Get all previously-used image URLs for this blog (to avoid duplicates)
+    const { data: allImages, error: allImagesError } = await supabase
+      .from("blog_images")
+      .select("image_url")
+      .eq("blog_id", blogId);
+
+    if (allImagesError) {
+      console.error("Error fetching existing images:", allImagesError);
+      return res.status(500).json({ error: "Failed to fetch existing images" });
+    }
+
+    const usedUrls = new Set(
+      (allImages || []).map((r) => r.image_url).filter(Boolean)
+    );
+
+    // C) Mark current latest image(s) for THIS section as not latest
+    const { error: markOldError } = await supabase
+      .from("blog_images")
+      .update({ is_latest: false })
+      .eq("blog_id", blogId)
+      .eq("section", section)
+      .eq("is_latest", true);
+
+    if (markOldError) {
+      console.error("Error marking old images:", markOldError);
+      return res.status(500).json({ error: "Failed to mark old images" });
+    }
+
+    // D) Fetch candidate images from Pexels (fetch more than 1, then pick a new one)
+    // Use customQuery if provided, otherwise build one from blog context
+    const pexelsQuery = customQuery
+      ? customQuery
+      : buildPexelsQuery({
+        venueName: blog.venue_name,
+        draftTopic: blog.draft_topic,
+        specialInstructions: blog.special_instructions,
+      });
+
+    const candidates = await fetchPexelsImages(pexelsQuery, 8); // fetch several to reduce duplicates
+    const picked = (candidates || []).find(
+      (img) => img?.image_url && !usedUrls.has(img.image_url)
+    );
+
+    // fallback: if everything is used, pick the first candidate (rare)
+    const newImageUrl = picked?.image_url || candidates?.[0]?.image_url || null;
+
+    if (!newImageUrl) {
+      return res.status(500).json({ error: "No new image found from Pexels" });
+    }
+
+    // E) Insert the new image row
+    const { data: inserted, error: insertError } = await supabase
+      .from("blog_images")
+      .insert({
+        blog_id: blogId,
+        user_id: blog.user_id,
+        image_url: newImageUrl,
+        image_source: "pexels",
+        section: section,
+        is_latest: true,
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error("Error inserting refreshed image:", insertError);
+      return res.status(500).json({ error: "Failed to insert new image" });
+    }
+
+    // F) Generate metadata for ONLY this new image
+    // IMPORTANT: use the same master prompt key you already use in /api/generate-blog for metadata
+    const imageMetadataMasterPrompt = await getMasterPromptByVenue(
+      "image_metadata"
+    );
+
+    const metadataPrompt = `
+${imageMetadataMasterPrompt}
+
+Blog context:
+- Venue: ${blog.venue_name}
+- Draft topic: ${blog.draft_topic}
+${blog.special_instructions
+        ? `- Special instructions: ${blog.special_instructions}`
+        : ""
+      }
+
+Generate metadata for this ONE image:
+image_url: ${inserted.image_url}
+section: ${inserted.section}
+
+Return ONLY a JSON object with keys:
+file_name, title_tag, alt_text
+`.trim();
+
+    let metaText = "";
+
+    // Use your existing provider preference (same style as your generate endpoint)
+    if (process.env.GROQ_API_KEY) {
+      const resp = await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "llama-3.1-8b-instant",
+            messages: [{ role: "user", content: metadataPrompt }],
+            temperature: 0.3,
+            max_tokens: 700,
+          }),
+        }
+      );
+
+      if (!resp.ok) {
+        const err = await resp.text();
+        console.error("Groq metadata error:", err);
+        return res
+          .status(500)
+          .json({ error: "Metadata generation failed (Groq)" });
+      }
+
+      const json = await resp.json();
+      metaText = json?.choices?.[0]?.message?.content || "";
+    } else if (genAI) {
+      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+      const result = await model.generateContent(metadataPrompt);
+      metaText = result.response.text();
+    } else {
+      return res
+        .status(500)
+        .json({ error: "No AI provider configured for metadata" });
+    }
+
+    const meta = extractFirstJsonObject(metaText);
+
+    if (!meta) {
+      console.error("Metadata JSON parse failed. Raw output:", metaText);
+      return res.status(500).json({ error: "Failed to parse metadata JSON" });
+    }
+
+    // G) Update the inserted image row with metadata
+    const { error: updateError } = await supabase
+      .from("blog_images")
+      .update({
+        file_name: meta.file_name || null,
+        title_tag: meta.title_tag || null,
+        alt_text: meta.alt_text || null,
+        metadata_generated_at: new Date().toISOString(),
+      })
+      .eq("id", inserted.id);
+
+    if (updateError) {
+      console.error("Error updating image metadata:", updateError);
+      return res.status(500).json({ error: "Failed to update image metadata" });
+    }
+
+    // H) Return updated latest images for UI
+    const { data: latestImages, error: latestError } = await supabase
+      .from("blog_images")
+      .select(
+        "id, image_url, image_source, section, file_name, title_tag, alt_text, is_latest, created_at, metadata_generated_at"
+      )
+      .eq("blog_id", blogId)
+      .eq("is_latest", true)
+      .order("created_at", { ascending: true });
+
+    if (latestError) {
+      console.error("Error fetching latest images:", latestError);
+      return res.status(500).json({ error: "Failed to fetch latest images" });
+    }
+
+    return res.json({ success: true, images: latestImages || [] });
+  } catch (err) {
+    console.error("Refresh image error:", err);
+    return res
+      .status(500)
+      .json({ error: "Refresh image failed", message: err.message });
+  }
+});
+
+app.get("/api/my-blogs", requireAuth, async (req, res) => {
+  try {
+    const { data: blogs, error } = await supabase
+      .from("blogs")
+      .select("id, venue_name, draft_topic, status, created_at, target_month")
+      .eq("user_id", req.user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ blogs });
+  } catch (err) {
+    console.error("Fetch history error:", err);
+    res.status(500).json({ error: "Failed to fetch history" });
+  }
+});
+
+// Update a blog
+app.put("/api/blogs/:id", requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { venue_name, draft_topic, blog_content } = req.body;
+
+    // Verify ownership
+    const { data: blog, error: fetchError } = await supabase
+      .from("blogs")
+      .select("user_id")
+      .eq("id", id)
+      .single();
+
+    if (fetchError || !blog) {
+      return res.status(404).json({ error: "Blog not found" });
+    }
+
+    if (blog.user_id !== req.user.id) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { error: updateError } = await supabase
+      .from("blogs")
+      .update({ venue_name, draft_topic, blog_content })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true, message: "Blog updated" });
+  } catch (err) {
+    console.error("Update blog error:", err);
+    res.status(500).json({ error: "Failed to update blog" });
+  }
+});
+
+// Delete a blog
+app.delete("/api/blogs/:id", requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify ownership first
+    const { data: blog, error: fetchError } = await supabase
+      .from("blogs")
+      .select("user_id")
+      .eq("id", id)
+      .single();
+
+    if (fetchError || !blog) {
+      return res.status(404).json({ error: "Blog not found" });
+    }
+
+    if (blog.user_id !== req.user.id) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { error: deleteError } = await supabase
+      .from("blogs")
+      .delete()
+      .eq("id", id);
+
+    if (deleteError) throw deleteError;
+
+    res.json({ success: true, message: "Blog deleted" });
+  } catch (err) {
+    console.error("Delete blog error:", err);
+    res.status(500).json({ error: "Failed to delete blog" });
   }
 });
 

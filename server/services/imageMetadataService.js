@@ -38,5 +38,22 @@ ${JSON.stringify(imageList, null, 2)}
     );
 
     const data = await response.json();
-    return JSON.parse(data.choices[0].message.content);
+
+    if (!response.ok) {
+        console.error("Groq API Error in image metadata:", data);
+        // Return empty metadata or throw specifically
+        return [];
+    }
+
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+        console.error("Unexpected Groq response format:", data);
+        return [];
+    }
+
+    try {
+        return JSON.parse(data.choices[0].message.content);
+    } catch (e) {
+        console.error("Failed to parse metadata JSON:", data.choices[0].message.content);
+        return [];
+    }
 }

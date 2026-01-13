@@ -1,5 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import "./App.css";
+import { supabase } from "./supabase";
+import { API_Base } from "./apiConfig";
+import Header from "./components/Header";
+import Login from "./components/Login";
+import History from "./components/History";
 
 function App() {
   const [formData, setFormData] = useState({
@@ -14,6 +19,30 @@ function App() {
 
   const [blogContent, setBlogContent] = useState("");
   const [images, setImages] = useState([]);
+  const [blogId, setBlogId] = useState(null);
+  const [refreshingSection, setRefreshingSection] = useState(null);
+  const [customQueries, setCustomQueries] = useState({}); // { sectionName: "query string" }
+
+  // Auth & View State
+  const [session, setSession] = useState(null);
+  const [showLogin, setShowLogin] = useState(false);
+  const [loginMode, setLoginMode] = useState("login");
+  const [showHistory, setShowHistory] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,19 +64,24 @@ function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setError("");
-    setBlogContent("");
-    setImages([]); // clear old images when generating again
-
+    // Generate Blog
     try {
-      // Use VITE_API_URL from environment variables, or default to relative path (for proxy)
-      const apiUrl = import.meta.env.VITE_API_URL || "";
-      const response = await fetch(`${apiUrl}/api/generate-blog`, {
+      setLoading(true);
+      setError("");
+      setBlogContent("");
+      setImages([]);
+
+      const headers = {
+        "Content-Type": "application/json",
+      };
+
+      if (session?.access_token) {
+        headers["Authorization"] = `Bearer ${session.access_token}`;
+      }
+
+      const response = await fetch(`${API_Base}/api/generate-blog`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify(formData),
       });
 
@@ -59,12 +93,57 @@ function App() {
 
       setBlogContent(data.blogContent);
       setImages(data.images || []); // <-- save images + metadata returned from backend
+      setBlogId(data.blogId);
     } catch (err) {
       setError(err.message || "An error occurred while generating the blog");
     } finally {
       setLoading(false);
     }
   };
+
+  const handleCustomQueryChange = (section, value) => {
+    setCustomQueries((prev) => ({
+      ...prev,
+      [section]: value,
+    }));
+  };
+
+  async function refreshImage(section) {
+    if (!blogId) {
+      setError("No blogId found yet. Generate a blog first.");
+      return;
+    }
+
+    try {
+      setRefreshingSection(section);
+      setError("");
+
+      const customQuery = customQueries[section]; // Get input value if exists
+
+      const headers = {
+        "Content-Type": "application/json",
+      };
+
+      if (session?.access_token) {
+        headers["Authorization"] = `Bearer ${session.access_token}`;
+      }
+
+      const resp = await fetch(`${API_Base}/api/refresh-image`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ blogId, section, customQuery }),
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Failed to refresh image");
+
+      setImages(data.images || []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRefreshingSection(null);
+    }
+  }
 
   const downloadDraft = () => {
     if (!blogContent) {
@@ -89,6 +168,7 @@ Generated: ${new Date().toLocaleString()}
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
+    a.download = `${formData.venueName.replace(/\s+/g, "_")}_Draft.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -97,162 +177,211 @@ Generated: ${new Date().toLocaleString()}
 
   return (
     <div className="app">
+      <Header
+        session={session}
+        onLoginClick={() => {
+          setLoginMode("login");
+          setShowLogin(true);
+        }}
+        onSignUpClick={() => {
+          setLoginMode("signup");
+          setShowLogin(true);
+        }}
+        onLogout={() => supabase.auth.signOut()}
+        showHistory={showHistory}
+        setShowHistory={setShowHistory}
+      />
+
+      {showLogin && (
+        <Login
+          initialMode={loginMode}
+          onClose={() => setShowLogin(false)}
+        />
+      )}
+
       <div className="container">
-        <h1 className="title">Blog Generator</h1>
-        <p className="subtitle">Generate professional blog posts using AI</p>
+        {showHistory && session ? (
+          <History session={session} onBack={() => setShowHistory(false)} />
+        ) : (
+          <>
+            <h1 className="title">Blog Generator</h1>
+            <p className="subtitle">Generate professional blog posts using AI</p>
 
-        <form onSubmit={handleSubmit} className="form">
-          <div className="form-group">
-            <label htmlFor="venueName">Venue Name *</label>
-            <input
-              type="text"
-              id="venueName"
-              name="venueName"
-              value={formData.venueName}
-              onChange={handleChange}
-              required
-              placeholder="Enter venue name"
-            />
-          </div>
+            <form onSubmit={handleSubmit} className="form">
+              <div className="form-group">
+                <label htmlFor="venueName">Venue Name *</label>
+                <input
+                  type="text"
+                  id="venueName"
+                  name="venueName"
+                  value={formData.venueName}
+                  onChange={handleChange}
+                  required
+                  placeholder="Enter venue name"
+                />
+              </div>
 
-          <div className="form-group">
-            <label htmlFor="targetMonth">Target Month *</label>
-            <input
-              type="text"
-              id="targetMonth"
-              name="targetMonth"
-              value={formData.targetMonth}
-              onChange={handleChange}
-              required
-              placeholder="e.g., January 2024"
-            />
-          </div>
+              <div className="form-group">
+                <label htmlFor="targetMonth">Target Month *</label>
+                <input
+                  type="text"
+                  id="targetMonth"
+                  name="targetMonth"
+                  value={formData.targetMonth}
+                  onChange={handleChange}
+                  required
+                  placeholder="e.g., January 2024"
+                />
+              </div>
 
-          <div className="form-group">
-            <label htmlFor="weekOfMonth">Week of Month *</label>
-            <select
-              id="weekOfMonth"
-              name="weekOfMonth"
-              value={formData.weekOfMonth}
-              onChange={handleChange}
-              required
-            >
-              <option value="">Select week</option>
-              <option value="First Week">First Week</option>
-              <option value="Second Week">Second Week</option>
-              <option value="Third Week">Third Week</option>
-              <option value="Fourth Week">Fourth Week</option>
-              <option value="Last Week">Last Week</option>
-            </select>
-          </div>
+              <div className="form-group">
+                <label htmlFor="weekOfMonth">Week of Month *</label>
+                <select
+                  id="weekOfMonth"
+                  name="weekOfMonth"
+                  value={formData.weekOfMonth}
+                  onChange={handleChange}
+                  required
+                >
+                  <option value="">Select week</option>
+                  <option value="First Week">First Week</option>
+                  <option value="Second Week">Second Week</option>
+                  <option value="Third Week">Third Week</option>
+                  <option value="Fourth Week">Fourth Week</option>
+                  <option value="Last Week">Last Week</option>
+                </select>
+              </div>
 
-          <div className="form-group">
-            <label htmlFor="creator">Creator *</label>
-            <input
-              type="text"
-              id="creator"
-              name="creator"
-              value={formData.creator}
-              onChange={handleChange}
-              required
-              placeholder="Enter creator name"
-            />
-          </div>
+              <div className="form-group">
+                <label htmlFor="creator">Creator *</label>
+                <input
+                  type="text"
+                  id="creator"
+                  name="creator"
+                  value={formData.creator}
+                  onChange={handleChange}
+                  required
+                  placeholder="Enter creator name"
+                />
+              </div>
 
-          <div className="form-group">
-            <label htmlFor="draftTopic">Draft Topic/Title *</label>
-            <input
-              type="text"
-              id="draftTopic"
-              name="draftTopic"
-              value={formData.draftTopic}
-              onChange={handleChange}
-              required
-              placeholder="Enter blog topic or title"
-            />
-          </div>
+              <div className="form-group">
+                <label htmlFor="draftTopic">Draft Topic/Title *</label>
+                <input
+                  type="text"
+                  id="draftTopic"
+                  name="draftTopic"
+                  value={formData.draftTopic}
+                  onChange={handleChange}
+                  required
+                  placeholder="Enter blog topic or title"
+                />
+              </div>
 
-          <div className="form-group">
-            <label htmlFor="specialInstructions">Special Instructions</label>
-            <textarea
-              id="specialInstructions"
-              name="specialInstructions"
-              value={formData.specialInstructions}
-              onChange={handleChange}
-              placeholder="Any special instructions or requirements for the blog..."
-              rows="4"
-            />
-          </div>
+              <div className="form-group">
+                <label htmlFor="specialInstructions">Special Instructions</label>
+                <textarea
+                  id="specialInstructions"
+                  name="specialInstructions"
+                  value={formData.specialInstructions}
+                  onChange={handleChange}
+                  placeholder="Any special instructions or requirements for the blog..."
+                  rows="4"
+                />
+              </div>
 
-          <div className="form-group">
-            <label htmlFor="imageFile">Image (optional)</label>
-            <div className="image-dropbox">
-              <input
-                id="imageFile"
-                type="file"
-                accept="image/*"
-                onChange={handleImageChange}
-              />
-              <p className="image-dropbox-help">
-                Drag and drop an image file here, or click to choose a file.
-              </p>
-              {formData.imageFileName && (
-                <p className="image-selected">
-                  Selected: <strong>{formData.imageFileName}</strong>
-                </p>
-              )}
-            </div>
-            <small className="helper-text">
-              The file name will be sent to the AI to generate image metadata
-              (file name, title tag, alt text) and appended to the end of the
-              blog draft.
-            </small>
-          </div>
+              <div className="form-group">
+                <label htmlFor="imageFile">Image (optional)</label>
+                <div className="image-dropbox">
+                  <input
+                    id="imageFile"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageChange}
+                  />
+                  <p className="image-dropbox-help">
+                    Drag and drop an image file here, or click to choose a file.
+                  </p>
+                  {formData.imageFileName && (
+                    <p className="image-selected">
+                      Selected: <strong>{formData.imageFileName}</strong>
+                    </p>
+                  )}
+                </div>
+                <small className="helper-text">
+                  The file name will be sent to the AI to generate image metadata
+                  (file name, title tag, alt text) and appended to the end of the
+                  blog draft.
+                </small>
+              </div>
 
-          <button type="submit" className="submit-btn" disabled={loading}>
-            {loading ? "Generating..." : "Generate Blog"}
-          </button>
-        </form>
-
-        {error && <div className="error-message">{error}</div>}
-
-        {blogContent && (
-          <div className="blog-preview">
-            <div className="blog-header">
-              <h2>Generated Blog</h2>
-              <button onClick={downloadDraft} className="download-btn">
-                Download Draft
+              <button type="submit" className="submit-btn" disabled={loading}>
+                {loading ? "Generating..." : "Generate Blog"}
               </button>
-            </div>
-            <div className="blog-content">{blogContent}</div>
-            {images.length > 0 && (
-              <div className="image-preview">
-                <h3>Generated Images + Metadata</h3>
+            </form>
 
-                {images.map((img) => (
-                  <div key={img.image_url} className="image-card">
-                    <img
-                      src={img.image_url}
-                      alt={img.alt_text || ""}
-                      className="image"
-                    />
+            {error && <div className="error-message">{error}</div>}
 
-                    <div className="image-meta">
-                      <div>
-                        <strong>File name:</strong> {img.file_name}
+            {blogContent && (
+              <div className="blog-preview">
+                <div className="blog-header">
+                  <h2>Generated Blog</h2>
+                  <button onClick={downloadDraft} className="download-btn">
+                    Download Draft
+                  </button>
+                </div>
+                <div className="blog-content">{blogContent}</div>
+                {images.length > 0 && (
+                  <div className="image-preview">
+                    <h3>Generated Images + Metadata</h3>
+
+                    {images.map((img) => (
+                      <div key={img.image_url} className="image-card">
+                        <img
+                          src={img.image_url}
+                          alt={img.alt_text || ""}
+                          className="image"
+                        />
+
+                        <div className="image-meta">
+                          <div>
+                            <strong>File name:</strong> {img.file_name}
+                          </div>
+                          <div>
+                            <strong>Title tag:</strong> {img.title_tag}
+                          </div>
+                          <div>
+                            <strong>Alt text:</strong> {img.alt_text}
+                          </div>
+                        </div>
+                        <div className="refresh-container">
+                          <input
+                            type="text"
+                            placeholder="Custom search query (optional)"
+                            className="custom-query-input"
+                            value={customQueries[img.section] || ""}
+                            onChange={(e) =>
+                              handleCustomQueryChange(img.section, e.target.value)
+                            }
+                          />
+                          <button
+                            type="button"
+                            onClick={() => refreshImage(img.section)}
+                            disabled={refreshingSection === img.section}
+                            className="refresh-btn"
+                          >
+                            {refreshingSection === img.section
+                              ? "Refreshing..."
+                              : "Refresh image"}
+                          </button>
+                        </div>
                       </div>
-                      <div>
-                        <strong>Title tag:</strong> {img.title_tag}
-                      </div>
-                      <div>
-                        <strong>Alt text:</strong> {img.alt_text}
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             )}
-          </div>
+          </>
         )}
       </div>
     </div>

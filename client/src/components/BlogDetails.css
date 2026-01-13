@@ -254,3 +254,29 @@
         width: 100%;
     }
 }
+
+.detail-image-placeholder {
+    width: 100%;
+    max-width: 900px;
+    height: 200px;
+    border-radius: 8px;
+    background: #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #555;
+    margin-bottom: 1rem;
+    border: 2px dashed #aaa;
+}
+
+.detail-image-placeholder .placeholder-icon {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+}
+
+.detail-image-placeholder .placeholder-note {
+    font-size: 0.8rem;
+    color: #777;
+    margin-top: 0.5rem;
+}

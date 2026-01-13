@@ -164,11 +164,11 @@ Generated: ${new Date().toLocaleString()}
 `;
 
     const content = metadata + blogContent;
-    const blob = new Blob([content], { type: "text/plain" });
+    const blob = new Blob([content], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${formData.venueName.replace(/\s+/g, "_")}_Draft.txt`;
+    a.download = `${formData.venueName.replace(/\s+/g, "_")}_Draft.md`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

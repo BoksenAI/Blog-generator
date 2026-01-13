@@ -137,6 +137,9 @@ app.post("/api/generate-blog", async (req, res) => {
       creator,
       draftTopic,
       specialInstructions,
+      imageFileNames = [], // Deprecated, kept for backward compat if needed (removed in UI)
+      heroImageName = "",
+      galleryImageNames = [], // New structured input
     } = req.body;
 
     if (!venueName || !targetMonth || !weekOfMonth || !creator || !draftTopic) {
@@ -305,7 +308,12 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
         user_id: blog.user_id,
         image_url: img.image_url,
         image_source: "pexels",
-        section: index === 0 ? "hero" : `gallery_${index}`, // hero + gallery_1, gallery_2...
+        image_url: img.image_url,
+        image_source: "pexels",
+        // If user provided a hero image, Pexels images should NOT be hero.
+        // They will be "pexels_gallery_N".
+        section: heroImageName ? `pexels_gallery_${index}` : (index === 0 ? "hero" : `gallery_${index}`),
+        is_latest: true,
         is_latest: true,
       }));
 
@@ -317,6 +325,50 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
         console.error("Error inserting multiple images:", insertImagesError);
       } else {
         console.log("Inserted images into blog_images:", rowsToInsert.length);
+      }
+    }
+
+    // STEP C-2: Store User Provided HERO Image
+    if (heroImageName) {
+      // Only one hero image allowed
+      const heroRow = {
+        blog_id: blog.id,
+        user_id: blog.user_id,
+        image_url: heroImageName, // Placeholder filename
+        image_source: "user_placeholder",
+        section: "hero", // Explicitly HERO
+        file_name: heroImageName,
+        is_latest: true,
+      };
+
+      const { error: insertHeroError } = await supabase
+        .from("blog_images")
+        .insert(heroRow);
+
+      if (insertHeroError) console.error("Error inserting user hero image:", insertHeroError);
+      else console.log("Inserted user hero image");
+    }
+
+    // STEP C-3: Store User Provided GALLERY Images
+    if (galleryImageNames && galleryImageNames.length > 0) {
+      const userGalleryRows = galleryImageNames.map((name, index) => ({
+        blog_id: blog.id,
+        user_id: blog.user_id,
+        image_url: name, // Placeholder
+        image_source: "user_placeholder",
+        section: `gallery_${index}`, // Standard gallery section
+        file_name: name,
+        is_latest: true,
+      }));
+
+      const { error: insertGalleryError } = await supabase
+        .from("blog_images")
+        .insert(userGalleryRows);
+
+      if (insertGalleryError) {
+        console.error("Error inserting user gallery images:", insertGalleryError);
+      } else {
+        console.log("Inserted user gallery images:", userGalleryRows.length);
       }
     }
     // 1. Fetch latest images for this blog

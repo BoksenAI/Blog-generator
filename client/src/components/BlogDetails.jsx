@@ -244,12 +244,18 @@ const BlogDetails = ({ blogId, onBack, session }) => {
                                             Section: {img.section}
                                         </div>
                                     )}
-                                    {img.image_url && (
+                                    {img.image_url && img.image_source !== "user_placeholder" ? (
                                         <img
                                             src={img.image_url}
                                             alt={img.alt_text || ""}
                                             className="detail-image"
                                         />
+                                    ) : (
+                                        <div className="detail-image-placeholder">
+                                            <div className="placeholder-icon">📷</div>
+                                            <span>User Image: <strong>{img.file_name}</strong></span>
+                                            <div className="placeholder-note">(Metadata generated)</div>
+                                        </div>
                                     )}
                                     <div className="image-meta-detail">
                                         {img.file_name && (

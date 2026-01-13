@@ -14,7 +14,9 @@ function App() {
     creator: "",
     draftTopic: "",
     specialInstructions: "",
-    imageFileName: "",
+    specialInstructions: "",
+    heroImageName: "",
+    galleryImageNames: [],
   });
 
   const [blogContent, setBlogContent] = useState("");
@@ -46,11 +48,30 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleImageChange = (e) => {
+  const handleHeroImageChange = (e) => {
     const file = e.target.files && e.target.files[0];
     setFormData((prev) => ({
       ...prev,
-      imageFileName: file ? file.name : "",
+      heroImageName: file ? file.name : "",
+    }));
+  };
+
+  const handleGalleryImagesChange = (e) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const newFileNames = Array.from(files).map(file => file.name);
+      setFormData((prev) => ({
+        ...prev,
+        // Append new files, avoiding duplicates
+        galleryImageNames: [...new Set([...prev.galleryImageNames, ...newFileNames])],
+      }));
+    }
+  };
+
+  const removeGalleryImage = (indexToRemove) => {
+    setFormData((prev) => ({
+      ...prev,
+      galleryImageNames: prev.galleryImageNames.filter((_, index) => index !== indexToRemove),
     }));
   };
 
@@ -107,7 +128,12 @@ function App() {
       [section]: value,
     }));
   };
+  /*const showUserUploads = () => {
+    for (let i = 0; i < imageFileNames.length; i++) {
+        console.log(imageFileNames[i]);
+    }
 
+  };*/
   async function refreshImage(section) {
     if (!blogId) {
       setError("No blogId found yet. Generate a blog first.");
@@ -291,27 +317,61 @@ Generated: ${new Date().toLocaleString()}
               </div>
 
               <div className="form-group">
-                <label htmlFor="imageFile">Image (optional)</label>
+                <label htmlFor="heroImage">Hero Image (optional)</label>
                 <div className="image-dropbox">
                   <input
-                    id="imageFile"
+                    id="heroImage"
                     type="file"
                     accept="image/*"
-                    onChange={handleImageChange}
+                    onChange={handleHeroImageChange}
                   />
                   <p className="image-dropbox-help">
-                    Drag and drop an image file here, or click to choose a file.
+                    Select a single Hero Image to appear at the top.
                   </p>
-                  {formData.imageFileName && (
+                  {formData.heroImageName && (
                     <p className="image-selected">
-                      Selected: <strong>{formData.imageFileName}</strong>
+                      Selected: <strong>{formData.heroImageName}</strong>
                     </p>
                   )}
                 </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="galleryImages">Gallery / Section Images (optional)</label>
+                <div className="image-dropbox">
+                  <input
+                    id="galleryImages"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleGalleryImagesChange}
+                  />
+                  <p className="image-dropbox-help">
+                    Drag and drop multiple images for the blog body.
+                  </p>
+                  {formData.galleryImageNames.length > 0 && (
+                    <div className="image-selected-list">
+                      <p>Selected Gallery Images:</p>
+                      <ul>
+                        {formData.galleryImageNames.map((name, idx) => (
+                          <li key={idx} className="file-list-item">
+                            {name}
+                            <button
+                              type="button"
+                              className="remove-file-btn"
+                              onClick={() => removeGalleryImage(idx)}
+                              title="Remove image"
+                            >
+                              ✕
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
                 <small className="helper-text">
-                  The file name will be sent to the AI to generate image metadata
-                  (file name, title tag, alt text) and appended to the end of the
-                  blog draft.
+                  The file names will be sent to the AI to generate metadata.
                 </small>
               </div>
 
@@ -336,12 +396,20 @@ Generated: ${new Date().toLocaleString()}
                     <h3>Generated Images + Metadata</h3>
 
                     {images.map((img) => (
-                      <div key={img.image_url} className="image-card">
-                        <img
-                          src={img.image_url}
-                          alt={img.alt_text || ""}
-                          className="image"
-                        />
+                      <div key={img.image_url + img.section} className="image-card">
+                        {img.image_source === "user_placeholder" ? (
+                          <div className="user-image-placeholder">
+                            <div className="placeholder-icon">📷</div>
+                            <span>User Image: <strong>{img.file_name}</strong></span>
+                            <small>(Not uploaded, metadata generated only)</small>
+                          </div>
+                        ) : (
+                          <img
+                            src={img.image_url}
+                            alt={img.alt_text || ""}
+                            className="image"
+                          />
+                        )}
 
                         <div className="image-meta">
                           <div>

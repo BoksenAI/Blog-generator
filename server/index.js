@@ -177,14 +177,13 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
   Week of Month: ${weekOfMonth}
   Creator: ${creator}
   Draft Topic: ${draftTopic}
-  ${
-    venueWebsite
-      ? `Venue Website: ${venueWebsite}
+  ${venueWebsite
+        ? `Venue Website: ${venueWebsite}
   MANDATORY REQUIREMENT: 
   1. You MUST include a Markdown hyperlink to the venue website at the end of the blog. Format: [${venueName}](${venueWebsite}).
   2. FOCUS ONLY on ${venueName}. Do NOT list or mention other venues. Do NOT create a 'Resources' section with other links.`
-      : ""
-  }
+        : ""
+      }
   ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
   `;
 
@@ -445,10 +444,10 @@ app.post("/api/refresh-image", async (req, res) => {
     const pexelsQuery = customQuery
       ? customQuery
       : buildPexelsQuery({
-          venueName: blog.venue_name,
-          draftTopic: blog.draft_topic,
-          specialInstructions: blog.special_instructions,
-        });
+        venueName: blog.venue_name,
+        draftTopic: blog.draft_topic,
+        specialInstructions: blog.special_instructions,
+      });
 
     const candidates = await fetchPexelsImages(pexelsQuery, 8); // fetch several to reduce duplicates
     const picked = (candidates || []).find(
@@ -493,11 +492,10 @@ ${imageMetadataMasterPrompt}
 Blog context:
 - Venue: ${blog.venue_name}
 - Draft topic: ${blog.draft_topic}
-${
-  blog.special_instructions
-    ? `- Special instructions: ${blog.special_instructions}`
-    : ""
-}
+${blog.special_instructions
+        ? `- Special instructions: ${blog.special_instructions}`
+        : ""
+      }
 
 Generate metadata for this ONE image:
 image_url: ${inserted.image_url}
@@ -609,6 +607,75 @@ app.get("/api/my-blogs", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("Fetch history error:", err);
     res.status(500).json({ error: "Failed to fetch history" });
+  }
+});
+
+// Update a blog
+app.put("/api/blogs/:id", requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { venue_name, draft_topic, blog_content } = req.body;
+
+    // Verify ownership
+    const { data: blog, error: fetchError } = await supabase
+      .from("blogs")
+      .select("user_id")
+      .eq("id", id)
+      .single();
+
+    if (fetchError || !blog) {
+      return res.status(404).json({ error: "Blog not found" });
+    }
+
+    if (blog.user_id !== req.user.id) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { error: updateError } = await supabase
+      .from("blogs")
+      .update({ venue_name, draft_topic, blog_content })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true, message: "Blog updated" });
+  } catch (err) {
+    console.error("Update blog error:", err);
+    res.status(500).json({ error: "Failed to update blog" });
+  }
+});
+
+// Delete a blog
+app.delete("/api/blogs/:id", requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify ownership first
+    const { data: blog, error: fetchError } = await supabase
+      .from("blogs")
+      .select("user_id")
+      .eq("id", id)
+      .single();
+
+    if (fetchError || !blog) {
+      return res.status(404).json({ error: "Blog not found" });
+    }
+
+    if (blog.user_id !== req.user.id) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    const { error: deleteError } = await supabase
+      .from("blogs")
+      .delete()
+      .eq("id", id);
+
+    if (deleteError) throw deleteError;
+
+    res.json({ success: true, message: "Blog deleted" });
+  } catch (err) {
+    console.error("Delete blog error:", err);
+    res.status(500).json({ error: "Failed to delete blog" });
   }
 });
 

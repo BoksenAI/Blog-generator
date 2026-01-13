@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import { supabase } from "./supabase";
+import { API_Base } from "./apiConfig";
 import Header from "./components/Header";
 import Login from "./components/Login";
 import History from "./components/History";
@@ -78,7 +79,7 @@ function App() {
         headers["Authorization"] = `Bearer ${session.access_token}`;
       }
 
-      const response = await fetch("http://localhost:3001/api/generate-blog", {
+      const response = await fetch(`${API_Base}/api/generate-blog`, {
         method: "POST",
         headers,
         body: JSON.stringify(formData),
@@ -127,7 +128,7 @@ function App() {
         headers["Authorization"] = `Bearer ${session.access_token}`;
       }
 
-      const resp = await fetch("http://localhost:3001/api/refresh-image", {
+      const resp = await fetch(`${API_Base}/api/refresh-image`, {
         method: "POST",
         headers,
         body: JSON.stringify({ blogId, section, customQuery }),

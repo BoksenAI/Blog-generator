@@ -11,8 +11,63 @@
 
 .blog-details-header h2 {
     margin: 0;
-    color: #333;
+    color: #d40000;
+    /* Changed to white for dark mode */
     font-size: 1.8rem;
+}
+
+.header-actions {
+    display: flex;
+    gap: 1rem;
+}
+
+.edit-btn,
+.save-btn,
+.delete-btn,
+.cancel-btn {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+    border: none;
+}
+
+.edit-btn {
+    background-color: #646cff;
+    color: white;
+}
+
+.edit-btn:hover {
+    background-color: #535bf2;
+}
+
+.save-btn {
+    background-color: #4ade80;
+    color: #003300;
+}
+
+.save-btn:hover {
+    background-color: #22c55e;
+}
+
+.delete-btn {
+    background-color: rgba(255, 107, 107, 0.2);
+    color: #ff6b6b;
+    border: 1px solid #ff6b6b;
+}
+
+.delete-btn:hover {
+    background-color: rgba(255, 107, 107, 0.4);
+}
+
+.cancel-btn {
+    background-color: #ccc;
+    color: #333;
+}
+
+.cancel-btn:hover {
+    background-color: #bbb;
 }
 
 .blog-details-content {
@@ -38,6 +93,16 @@
 .info-row strong {
     color: #555;
     margin-right: 0.5rem;
+}
+
+.edit-input {
+    background: #333;
+    border: 1px solid #555;
+    color: #fff;
+    padding: 0.5rem;
+    border-radius: 4px;
+    width: 100%;
+    max-width: 400px;
 }
 
 .status {
@@ -76,6 +141,18 @@
     color: #333;
     white-space: pre-wrap;
     font-size: 1rem;
+}
+
+.edit-textarea {
+    width: 100%;
+    background: #1a1a1a;
+    border: 1px solid #555;
+    color: #ccc;
+    padding: 1rem;
+    border-radius: 4px;
+    line-height: 1.6;
+    font-family: inherit;
+    resize: vertical;
 }
 
 .blog-images-section {

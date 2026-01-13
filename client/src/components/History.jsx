@@ -1,6 +1,7 @@
 
 import React, { useEffect, useState } from "react";
 import { supabase } from "../supabase";
+import { API_Base } from "../apiConfig";
 import "./History.css";
 import BlogDetails from "./BlogDetails";
 
@@ -19,7 +20,7 @@ const History = ({ session, onBack }) => {
             const token = session?.access_token;
             if (!token) return;
 
-            const response = await fetch("http://localhost:3001/api/my-blogs", {
+            const response = await fetch(`${API_Base}/api/my-blogs`, {
                 headers: {
                     Authorization: `Bearer ${token}`,
                 },
@@ -57,7 +58,7 @@ const History = ({ session, onBack }) => {
     };
 
     if (selectedBlogId) {
-        return <BlogDetails blogId={selectedBlogId} onBack={handleBackToHistory} />;
+        return <BlogDetails blogId={selectedBlogId} onBack={handleBackToHistory} session={session} />;
     }
 
     return (

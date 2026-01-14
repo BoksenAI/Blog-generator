@@ -1,3 +1,4 @@
+
 export async function generateImageMetadata({
     images,
     blogContext,
@@ -5,20 +6,35 @@ export async function generateImageMetadata({
     apiKey,
     masterPrompt,
 }) {
-    const imageList = images.map((img, index) => ({
-        index,
-        image_url: img.image_url,
-    }));
+    // Construct the user message content array
+    // Start with the text prompt
+    const content = [
+        {
+            type: "text",
+            text: `${masterPrompt}\n\nBlog context:\n${blogContext}\n\nInstructions: Analyze the provided images and generate metadata (file_name, title_tag, alt_text) for each. Return ONLY a JSON array with objects containing 'id' (from input) and the generated fields.`,
+        },
+    ];
 
-    const prompt = `
-${masterPrompt}
+    images.forEach((img, index) => {
+        content.push({
+            type: "text",
+            text: `\nImage ID: ${img.id} (Section: ${img.section}):\n`,
+        });
 
-Blog context:
-${blogContext}
-
-Images:
-${JSON.stringify(imageList, null, 2)}
-`;
+        if (img.is_base64 && img.image_url) {
+            content.push({
+                type: "image_url",
+                image_url: {
+                    url: img.image_url, // This is the data:image/png;base64,... string
+                },
+            });
+        } else {
+            content.push({
+                type: "text",
+                text: `[Image URL/Placeholder: ${img.image_url}] (Analyze based on filename context)`,
+            });
+        }
+    });
 
     const response = await fetch(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -29,10 +45,11 @@ ${JSON.stringify(imageList, null, 2)}
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                model: "llama-3.1-8b-instant",
-                messages: [{ role: "user", content: prompt }],
+                model: "meta-llama/llama-4-scout-17b-16e-instruct", // Correct full ID from Groq API list
+                messages: [{ role: "user", content: content }],
                 temperature: 0.2,
-                max_tokens: 1000,
+                max_tokens: 2048,
+                response_format: { type: "json_object" }, // Enforce JSON
             }),
         }
     );
@@ -41,7 +58,6 @@ ${JSON.stringify(imageList, null, 2)}
 
     if (!response.ok) {
         console.error("Groq API Error in image metadata:", data);
-        // Return empty metadata or throw specifically
         return [];
     }
 
@@ -51,7 +67,9 @@ ${JSON.stringify(imageList, null, 2)}
     }
 
     try {
-        return JSON.parse(data.choices[0].message.content);
+        const parsed = JSON.parse(data.choices[0].message.content);
+        // Handle if it returns { "images": [...] } or just [...]
+        return Array.isArray(parsed) ? parsed : (parsed.images || []);
     } catch (e) {
         console.error("Failed to parse metadata JSON:", data.choices[0].message.content);
         return [];

@@ -14,8 +14,9 @@ function App() {
     creator: "",
     draftTopic: "",
     specialInstructions: "",
-    heroImageName: "",
-    galleryImageNames: [],
+    specialInstructions: "",
+    heroImageFile: null,
+    galleryImageFiles: [],
   });
 
   const [blogContent, setBlogContent] = useState("");
@@ -51,20 +52,18 @@ function App() {
     const file = e.target.files && e.target.files[0];
     setFormData((prev) => ({
       ...prev,
-      heroImageName: file ? file.name : "",
+      heroImageFile: file || null,
     }));
   };
 
   const handleGalleryImagesChange = (e) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      const newFileNames = Array.from(files).map((file) => file.name);
+      const newFiles = Array.from(files);
       setFormData((prev) => ({
         ...prev,
-        // Append new files, avoiding duplicates
-        galleryImageNames: [
-          ...new Set([...prev.galleryImageNames, ...newFileNames]),
-        ],
+        // Append new files
+        galleryImageFiles: [...prev.galleryImageFiles, ...newFiles],
       }));
     }
   };
@@ -72,9 +71,7 @@ function App() {
   const removeGalleryImage = (indexToRemove) => {
     setFormData((prev) => ({
       ...prev,
-      galleryImageNames: prev.galleryImageNames.filter(
-        (_, index) => index !== indexToRemove
-      ),
+      galleryImageFiles: prev.galleryImageFiles.filter((_, index) => index !== indexToRemove),
     }));
   };
 
@@ -96,17 +93,33 @@ function App() {
       setImages([]);
 
       const headers = {
-        "Content-Type": "application/json",
+        // "Content-Type": "application/json", // Remove for FormData, browser sets multipart/form-data
       };
 
       if (session?.access_token) {
         headers["Authorization"] = `Bearer ${session.access_token}`;
       }
 
+      const body = new FormData();
+      body.append("venueName", formData.venueName);
+      body.append("targetMonth", formData.targetMonth);
+      body.append("weekOfMonth", formData.weekOfMonth);
+      body.append("creator", formData.creator);
+      body.append("draftTopic", formData.draftTopic);
+      body.append("specialInstructions", formData.specialInstructions);
+
+      if (formData.heroImageFile) {
+        body.append("heroImage", formData.heroImageFile);
+      }
+
+      formData.galleryImageFiles.forEach((file) => {
+        body.append("galleryImages", file);
+      });
+
       const response = await fetch(`${API_Base}/api/generate-blog`, {
         method: "POST",
         headers,
-        body: JSON.stringify(formData),
+        body: body,
       });
 
       const data = await response.json();
@@ -222,7 +235,10 @@ Generated: ${new Date().toLocaleString()}
       />
 
       {showLogin && (
-        <Login initialMode={loginMode} onClose={() => setShowLogin(false)} />
+        <Login
+          initialMode={loginMode}
+          onClose={() => setShowLogin(false)}
+        />
       )}
 
       <div className="container">
@@ -231,9 +247,7 @@ Generated: ${new Date().toLocaleString()}
         ) : (
           <>
             <h1 className="title">Blog Generator</h1>
-            <p className="subtitle">
-              Generate professional blog posts using AI
-            </p>
+            <p className="subtitle">Generate professional blog posts using AI</p>
 
             <form onSubmit={handleSubmit} className="form">
               <div className="form-group">
@@ -307,9 +321,7 @@ Generated: ${new Date().toLocaleString()}
               </div>
 
               <div className="form-group">
-                <label htmlFor="specialInstructions">
-                  Special Instructions
-                </label>
+                <label htmlFor="specialInstructions">Special Instructions</label>
                 <textarea
                   id="specialInstructions"
                   name="specialInstructions"
@@ -332,18 +344,16 @@ Generated: ${new Date().toLocaleString()}
                   <p className="image-dropbox-help">
                     Select a single Hero Image to appear at the top.
                   </p>
-                  {formData.heroImageName && (
+                  {formData.heroImageFile && (
                     <p className="image-selected">
-                      Selected: <strong>{formData.heroImageName}</strong>
+                      Selected: <strong>{formData.heroImageFile.name}</strong>
                     </p>
                   )}
                 </div>
               </div>
 
               <div className="form-group">
-                <label htmlFor="galleryImages">
-                  Gallery / Section Images (optional)
-                </label>
+                <label htmlFor="galleryImages">Gallery / Section Images (optional)</label>
                 <div className="image-dropbox">
                   <input
                     id="galleryImages"
@@ -355,13 +365,13 @@ Generated: ${new Date().toLocaleString()}
                   <p className="image-dropbox-help">
                     Drag and drop multiple images for the blog body.
                   </p>
-                  {formData.galleryImageNames.length > 0 && (
+                  {formData.galleryImageFiles.length > 0 && (
                     <div className="image-selected-list">
                       <p>Selected Gallery Images:</p>
                       <ul>
-                        {formData.galleryImageNames.map((name, idx) => (
+                        {formData.galleryImageFiles.map((file, idx) => (
                           <li key={idx} className="file-list-item">
-                            {name}
+                            {file.name}
                             <button
                               type="button"
                               className="remove-file-btn"
@@ -402,19 +412,12 @@ Generated: ${new Date().toLocaleString()}
                     <h3>Generated Images + Metadata</h3>
 
                     {images.map((img) => (
-                      <div
-                        key={img.image_url + img.section}
-                        className="image-card"
-                      >
+                      <div key={img.image_url + img.section} className="image-card">
                         {img.image_source === "user_placeholder" ? (
                           <div className="user-image-placeholder">
                             <div className="placeholder-icon">📷</div>
-                            <span>
-                              User Image: <strong>{img.file_name}</strong>
-                            </span>
-                            <small>
-                              (Not uploaded, metadata generated only)
-                            </small>
+                            <span>User Image: <strong>{img.file_name}</strong></span>
+                            <small>(Not uploaded, metadata generated only)</small>
                           </div>
                         ) : (
                           <img
@@ -442,10 +445,7 @@ Generated: ${new Date().toLocaleString()}
                             className="custom-query-input"
                             value={customQueries[img.section] || ""}
                             onChange={(e) =>
-                              handleCustomQueryChange(
-                                img.section,
-                                e.target.value
-                              )
+                              handleCustomQueryChange(img.section, e.target.value)
                             }
                           />
                           <button

@@ -11,7 +11,7 @@ export async function generateImageMetadata({
     const content = [
         {
             type: "text",
-            text: `${masterPrompt}\n\nBlog context:\n${blogContext}\n\nInstructions: Analyze the provided images and generate metadata (file_name, title_tag, alt_text) for each. Return ONLY a JSON array with objects containing 'id' (from input) and the generated fields.`,
+            text: `${masterPrompt}\n\nBlog context:\n${blogContext}\n\nInstructions: Analyze the provided images and generate metadata (file_name, title_tag, alt_text) for each. \n- PRIORITIZE VISUAL DETAILS: Describe exactly what you see in the image.\n- Do NOT assume the style or cuisine solely based on the 'Venue Name' (e.g. 'Tokyo' does not automatically mean 'Japanese style' if the image shows modern industrial decor).\n- Return ONLY a JSON array with objects containing 'id' (from input) and the generated fields.`,
         },
     ];
 

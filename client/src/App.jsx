@@ -14,7 +14,6 @@ function App() {
     creator: "",
     draftTopic: "",
     specialInstructions: "",
-    specialInstructions: "",
     heroImageName: "",
     galleryImageNames: [],
   });
@@ -59,11 +58,13 @@ function App() {
   const handleGalleryImagesChange = (e) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      const newFileNames = Array.from(files).map(file => file.name);
+      const newFileNames = Array.from(files).map((file) => file.name);
       setFormData((prev) => ({
         ...prev,
         // Append new files, avoiding duplicates
-        galleryImageNames: [...new Set([...prev.galleryImageNames, ...newFileNames])],
+        galleryImageNames: [
+          ...new Set([...prev.galleryImageNames, ...newFileNames]),
+        ],
       }));
     }
   };
@@ -71,7 +72,9 @@ function App() {
   const removeGalleryImage = (indexToRemove) => {
     setFormData((prev) => ({
       ...prev,
-      galleryImageNames: prev.galleryImageNames.filter((_, index) => index !== indexToRemove),
+      galleryImageNames: prev.galleryImageNames.filter(
+        (_, index) => index !== indexToRemove
+      ),
     }));
   };
 
@@ -219,10 +222,7 @@ Generated: ${new Date().toLocaleString()}
       />
 
       {showLogin && (
-        <Login
-          initialMode={loginMode}
-          onClose={() => setShowLogin(false)}
-        />
+        <Login initialMode={loginMode} onClose={() => setShowLogin(false)} />
       )}
 
       <div className="container">
@@ -231,7 +231,9 @@ Generated: ${new Date().toLocaleString()}
         ) : (
           <>
             <h1 className="title">Blog Generator</h1>
-            <p className="subtitle">Generate professional blog posts using AI</p>
+            <p className="subtitle">
+              Generate professional blog posts using AI
+            </p>
 
             <form onSubmit={handleSubmit} className="form">
               <div className="form-group">
@@ -305,7 +307,9 @@ Generated: ${new Date().toLocaleString()}
               </div>
 
               <div className="form-group">
-                <label htmlFor="specialInstructions">Special Instructions</label>
+                <label htmlFor="specialInstructions">
+                  Special Instructions
+                </label>
                 <textarea
                   id="specialInstructions"
                   name="specialInstructions"
@@ -337,7 +341,9 @@ Generated: ${new Date().toLocaleString()}
               </div>
 
               <div className="form-group">
-                <label htmlFor="galleryImages">Gallery / Section Images (optional)</label>
+                <label htmlFor="galleryImages">
+                  Gallery / Section Images (optional)
+                </label>
                 <div className="image-dropbox">
                   <input
                     id="galleryImages"
@@ -396,12 +402,19 @@ Generated: ${new Date().toLocaleString()}
                     <h3>Generated Images + Metadata</h3>
 
                     {images.map((img) => (
-                      <div key={img.image_url + img.section} className="image-card">
+                      <div
+                        key={img.image_url + img.section}
+                        className="image-card"
+                      >
                         {img.image_source === "user_placeholder" ? (
                           <div className="user-image-placeholder">
                             <div className="placeholder-icon">📷</div>
-                            <span>User Image: <strong>{img.file_name}</strong></span>
-                            <small>(Not uploaded, metadata generated only)</small>
+                            <span>
+                              User Image: <strong>{img.file_name}</strong>
+                            </span>
+                            <small>
+                              (Not uploaded, metadata generated only)
+                            </small>
                           </div>
                         ) : (
                           <img
@@ -429,7 +442,10 @@ Generated: ${new Date().toLocaleString()}
                             className="custom-query-input"
                             value={customQueries[img.section] || ""}
                             onChange={(e) =>
-                              handleCustomQueryChange(img.section, e.target.value)
+                              handleCustomQueryChange(
+                                img.section,
+                                e.target.value
+                              )
                             }
                           />
                           <button

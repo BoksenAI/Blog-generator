@@ -14,7 +14,6 @@ function App() {
     creator: "",
     draftTopic: "",
     specialInstructions: "",
-    specialInstructions: "",
     heroImageFile: null,
     galleryImageFiles: [],
   });
@@ -193,6 +192,7 @@ function App() {
       return;
     }
 
+    const content = injectImagesIntoMarkdown(blogContent, images);
     const metadata = `
 Venue Name: ${formData.venueName}
 Target Month: ${formData.targetMonth}
@@ -205,8 +205,8 @@ Generated: ${new Date().toLocaleString()}
 
 `;
 
-    const content = metadata + blogContent;
-    const blob = new Blob([content], { type: "text/markdown" });
+    const fullContent = metadata + content;
+    const blob = new Blob([fullContent], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -215,6 +215,103 @@ Generated: ${new Date().toLocaleString()}
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  // Helper to replace placeholders with Markdown syntax for download
+  const injectImagesIntoMarkdown = (text, images) => {
+    let result = text;
+    const heroImage = images.find(img => img.section === 'hero');
+    const galleryImages = images.filter(img => img.section !== 'hero');
+    let galleryIndex = 0;
+
+    // 1. Prepend Hero Image if exists
+    if (heroImage) {
+      const heroMarkdown = `![${heroImage.alt_text || 'Hero Image'}](${heroImage.image_url} "${heroImage.title_tag || ''}")\n\n`;
+      result = heroMarkdown + result;
+    }
+
+    // 2. Replace placeholders [img: ...]
+    result = result.replace(/\[img:[^\]]*\]/gi, (match) => {
+      if (galleryIndex < galleryImages.length) {
+        const img = galleryImages[galleryIndex++];
+        return `![${img.alt_text || 'Blog Image'}](${img.image_url} "${img.title_tag || ''}")`;
+      }
+      return ""; // Remove placeholder
+    });
+
+    // 3. Append remaining gallery images
+    if (galleryIndex < galleryImages.length) {
+      result += "\n\n## Gallery\n\n";
+      while (galleryIndex < galleryImages.length) {
+        const img = galleryImages[galleryIndex++];
+        result += `![${img.alt_text || 'Gallery Image'}](${img.image_url} "${img.title_tag || ''}")\n\n`;
+      }
+    }
+
+    return result;
+  };
+
+  // Helper to render content with VISUAL images for preview
+  const renderContentWithImages = (text, images) => {
+    if (!text) return null;
+
+    // Split by regex but keep delimiters to map them
+    const parts = text.split(/(\[img:[^\]]*\])/gi);
+    const heroImage = images.find(img => img.section === 'hero');
+    const galleryImages = images.filter(img => img.section !== 'hero');
+    let galleryIndex = 0;
+
+    const elements = [];
+
+    // 1. Visual Hero Image at top
+    if (heroImage) {
+      elements.push(
+        <div key="hero" className="inline-image-container hero-container">
+          <img src={heroImage.image_url} alt={heroImage.alt_text} className="inline-hero-image" />
+          <div className="inline-meta">
+            <small><strong>File:</strong> {heroImage.file_name} | <strong>Alt:</strong> {heroImage.alt_text}</small>
+          </div>
+        </div>
+      );
+    }
+
+    parts.forEach((part, index) => {
+      if (part.match(/^\[img:/i)) {
+        // It's a placeholder
+        if (galleryIndex < galleryImages.length) {
+          const img = galleryImages[galleryIndex++];
+          elements.push(
+            <div key={`img-${index}`} className="inline-image-container">
+              <img src={img.image_url} alt={img.alt_text} className="inline-image" />
+              <div className="inline-meta">
+                <small><strong>Alt:</strong> {img.alt_text}</small>
+              </div>
+            </div>
+          );
+        }
+      } else {
+        // It's text
+        elements.push(<span key={`text-${index}`} className="text-content">{part}</span>);
+      }
+    });
+
+    // 3. Append remaining gallery images
+    if (galleryIndex < galleryImages.length) {
+      elements.push(<h3 key="gallery-header">Additional Gallery Images</h3>);
+      while (galleryIndex < galleryImages.length) {
+        const img = galleryImages[galleryIndex++];
+        elements.push(
+          <div key={`extra-img-${galleryIndex}`} className="inline-image-container">
+            <img src={img.image_url} alt={img.alt_text} className="inline-image" />
+            <div className="inline-meta">
+              <small><strong>Alt:</strong> {img.alt_text}</small>
+            </div>
+          </div>
+        );
+      }
+    }
+
+    return elements;
   };
 
   return (
@@ -406,7 +503,9 @@ Generated: ${new Date().toLocaleString()}
                     Download Draft
                   </button>
                 </div>
-                <div className="blog-content">{blogContent}</div>
+                <div className="blog-content">
+                  {renderContentWithImages(blogContent, images)}
+                </div>
                 {images.length > 0 && (
                   <div className="image-preview">
                     <h3>Generated Images + Metadata</h3>

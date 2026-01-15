@@ -2,11 +2,17 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { Anthropic } from "@anthropic-ai/sdk";
 import { fetchPexelsImages } from "./services/pexelsService.js";
 import { supabase } from "./supabaseClient.js";
 import { generateImageMetadata } from "./services/imageMetadataService.js";
 import { authMiddleware, requireAuth } from "./middleware/auth.js";
+import multer from "multer";
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+});
 
 dotenv.config();
 
@@ -68,9 +74,36 @@ async function getVenueSpecificPrompt(venue) {
 }
 
 // Initialize AI providers
-const genAI = process.env.GEMINI_API_KEY
-  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
+
+// Helper to ensure storage bucket exists
+async function ensureBucketExists() {
+  try {
+    const output = await supabase.storage.getBucket('blog-images');
+    if (output.error && output.error.message.includes('not found')) {
+      console.log("Bucket 'blog-images' not found. Creating...");
+      const { data, error } = await supabase.storage.createBucket('blog-images', {
+        public: true,
+        fileSizeLimit: 10485760, // 10MB
+        allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+      });
+      if (error) {
+        console.error("Failed to create bucket:", error);
+      } else {
+        console.log("Created 'blog-images' bucket successfully.");
+      }
+    } else {
+      console.log("Bucket 'blog-images' exists.");
+    }
+  } catch (e) {
+    console.error("Error checking bucket:", e);
+  }
+}
+
+// Check bucket on startup
+ensureBucketExists();
 
 // Debug endpoint to list available models
 app.get("/api/list-models", async (req, res) => {
@@ -128,52 +161,123 @@ function buildPexelsQuery({ venueName, draftTopic, specialInstructions }) {
 }
 
 // Blog generation endpoint
-app.post("/api/generate-blog", async (req, res) => {
-  try {
-    const {
-      venueName,
-      targetMonth,
-      weekOfMonth,
-      creator,
-      draftTopic,
-      specialInstructions,
-      imageFileNames = [], // Deprecated, kept for backward compat if needed (removed in UI)
-      heroImageName = "",
-      galleryImageNames = [], // New structured input
-    } = req.body;
+app.post(
+  "/api/generate-blog",
+  upload.fields([{ name: "heroImage", maxCount: 1 }, { name: "galleryImages", maxCount: 10 }]),
+  async (req, res) => {
+    try {
+      const {
+        venueName,
+        targetMonth,
+        weekOfMonth,
+        creator,
+        draftTopic,
+        specialInstructions,
+      } = req.body;
 
-    if (!venueName || !targetMonth || !weekOfMonth || !creator || !draftTopic) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-    //Master Prompt↓
-    /* `You are a professional blog writer. Write a comprehensive blog post based on the following information:
-Venue Name: ${venueName}
-Target Month: ${targetMonth}
-Week of Month: ${weekOfMonth}
-Creator: ${creator}
-Draft Topic/Title: ${draftTopic}
-${specialInstructions ? `Special Instructions: ${specialInstructions}` : ''}
+      // Helper to convert buffer to base64
+      const fileToBase64 = (file) => {
+        const b64 = file.buffer.toString("base64");
+        const mime = file.mimetype;
+        return `data:${mime};base64,${b64}`;
+      };
 
-You are an expert copywriter for 'Eat Me.' Write a blog for ${venueName} targeting rich tourists in Tokyo. CRITICAL RULES:
-1. Never use em dashes (—). Use commas or periods instead. 2.Define any Japanese cultural terms (e.g., yōshoku) in line.
-3.Tone: Sophisticated, welcoming, and high-end. 4.Use these ${specialInstructions ? `Special Instructions: ${specialInstructions}` : 'standard guidelines'}...
-Format: H1, H2, H3, clean paragraph spacing.`;*/
+      let heroImageName = "";
+      let galleryImageNames = [];
+      let uploadedImagesData = []; // To store { url (base64 for vision), filename, section }
 
-    // 1. Try to get a specific prompt for the venue
-    let venueData = await getVenueSpecificPrompt(venueName);
-    let masterPrompt = venueData?.prompt;
-    let venueWebsite = venueData?.website;
+      const uploadToSupabase = async (file) => {
+        const timestamp = Date.now();
+        // Sanitize filename
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
+        const path = `uploads/${timestamp}_${safeName}`;
 
-    /*if (masterPrompt) {
-      console.log("First letter of prompt:", masterPrompt.charAt(66));
-    }*/
-    // 2. If no specific prompt, fall back to the default master prompt
-    if (!masterPrompt) {
-      console.log(`No specific prompt found for ${venueName}, using default.`);
-      masterPrompt = await getMasterPromptByVenue("blog_generation");
-    }
-    //Master Prompt+user inputs↓
-    const prompt = `
+        const { data, error } = await supabase.storage
+          .from("blog-images")
+          .upload(path, file.buffer, {
+            contentType: file.mimetype,
+            upsert: false,
+          });
+
+        if (error) {
+          console.error("Supabase Storage Upload Error:", error);
+          throw error;
+        }
+
+        // Get Public URL
+        const { data: publicData } = supabase.storage
+          .from("blog-images")
+          .getPublicUrl(path);
+
+        return publicData.publicUrl;
+      };
+
+      if (req.files["heroImage"] && req.files["heroImage"][0]) {
+        const file = req.files["heroImage"][0];
+        heroImageName = file.originalname;
+
+        // Upload to Storage
+        const publicUrl = await uploadToSupabase(file);
+        const b64 = fileToBase64(file); // Still need base64 for Vision analysis immediately
+
+        uploadedImagesData.push({
+          image_url: b64, // Keep base64 for IMMEDIATE vision analysis (metadata generation)
+          public_url: publicUrl, // STORE this in DB for persistence
+          file_name: heroImageName,
+          section: "hero",
+          is_user_upload: true
+        });
+      }
+
+      if (req.files["galleryImages"]) {
+        // Use Promise.all for parallel uploads
+        await Promise.all(req.files["galleryImages"].map(async (file, index) => {
+          const b64 = fileToBase64(file);
+          const publicUrl = await uploadToSupabase(file);
+
+          galleryImageNames.push(file.originalname);
+          uploadedImagesData.push({
+            image_url: b64,
+            public_url: publicUrl,
+            file_name: file.originalname,
+            section: `gallery_${index}`,
+            is_user_upload: true
+          });
+        }));
+      }
+
+      if (!venueName || !targetMonth || !weekOfMonth || !creator || !draftTopic) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+      //Master Prompt↓
+      /* `You are a professional blog writer. Write a comprehensive blog post based on the following information:
+  Venue Name: ${venueName}
+  Target Month: ${targetMonth}
+  Week of Month: ${weekOfMonth}
+  Creator: ${creator}
+  Draft Topic/Title: ${draftTopic}
+  ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ''}
+  
+  You are an expert copywriter for 'Eat Me.' Write a blog for ${venueName} targeting rich tourists in Tokyo. CRITICAL RULES:
+  1. Never use em dashes (—). Use commas or periods instead. 2.Define any Japanese cultural terms (e.g., yōshoku) in line.
+  3.Tone: Sophisticated, welcoming, and high-end. 4.Use these ${specialInstructions ? `Special Instructions: ${specialInstructions}` : 'standard guidelines'}...
+  Format: H1, H2, H3, clean paragraph spacing.`;*/
+
+      // 1. Try to get a specific prompt for the venue
+      let venueData = await getVenueSpecificPrompt(venueName);
+      let masterPrompt = venueData?.prompt;
+      let venueWebsite = venueData?.website;
+
+      /*if (masterPrompt) {
+        console.log("First letter of prompt:", masterPrompt.charAt(66));
+      }*/
+      // 2. If no specific prompt, fall back to the default master prompt
+      if (!masterPrompt) {
+        console.log(`No specific prompt found for ${venueName}, using default.`);
+        masterPrompt = await getMasterPromptByVenue("blog_generation");
+      }
+      //Master Prompt+user inputs↓
+      const prompt = `
   ${masterPrompt} 
   Venue Name: ${venueName}
   Target Month: ${targetMonth}
@@ -181,267 +285,345 @@ Format: H1, H2, H3, clean paragraph spacing.`;*/
   Creator: ${creator}
   Draft Topic: ${draftTopic}
   ${venueWebsite
-        ? `Venue Website: ${venueWebsite}
+          ? `Venue Website: ${venueWebsite}
   MANDATORY REQUIREMENT: 
   1. You MUST include a Markdown hyperlink to the venue website at the end of the blog. Format: [${venueName}](${venueWebsite}).
   2. FOCUS ONLY on ${venueName}. Do NOT list or mention other venues. Do NOT create a 'Resources' section with other links.`
-        : ""
-      }
+          : ""
+        }
   ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
   `;
 
-    let blogContent;
-    let blog;
-    //const aiProvider = process.env.AI_PROVIDER || 'gemini'; // Options: 'gemini', 'groq', 'huggingface'
-    const aiProvider = "groq";
-    try {
-      if (aiProvider === "groq" && process.env.GROQ_API_KEY) {
-        // Use Groq API (fast and free)
-        const groqResponse = await fetch(
-          "https://api.groq.com/openai/v1/chat/completions",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: "llama-3.1-8b-instant", // Common models: 'llama-3.1-8b-instant', 'mixtral-8x7b-32768', 'llama-3.1-70b-versatile'
-              messages: [
-                {
-                  role: "user",
-                  content: prompt,
-                },
-              ],
-              temperature: 0.7,
-              max_tokens: 2048, // Reduced from 4096 as some models have lower limits
-            }),
+      let blogContent;
+      let blog;
+      //const aiProvider = process.env.AI_PROVIDER || 'gemini'; // Options: 'gemini', 'groq', 'huggingface'
+      const aiProvider = "groq";
+      try {
+        if (aiProvider === "groq" && process.env.GROQ_API_KEY) {
+          // Use Groq API (fast and free)
+          const groqResponse = await fetch(
+            "https://api.groq.com/openai/v1/chat/completions",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: "llama-3.1-8b-instant", // Common models: 'llama-3.1-8b-instant', 'mixtral-8x7b-32768', 'llama-3.1-70b-versatile'
+                messages: [
+                  {
+                    role: "user",
+                    content: prompt,
+                  },
+                ],
+                temperature: 0.7,
+                max_tokens: 2048, // Reduced from 4096 as some models have lower limits
+              }),
+            }
+          );
+          //Checks for the status response from groq and return the model name and error message
+          if (!groqResponse.ok) {
+            const errorData = await groqResponse
+              .json()
+              .catch(() => ({ error: "Unknown error" }));
+            console.error("Groq API error details:", errorData);
+            throw new Error(
+              `Groq API error: ${groqResponse.status} - ${JSON.stringify(
+                errorData
+              )}`
+            );
           }
-        );
-        //Checks for the status response from groq and return the model name and error message
-        if (!groqResponse.ok) {
-          const errorData = await groqResponse
-            .json()
-            .catch(() => ({ error: "Unknown error" }));
-          console.error("Groq API error details:", errorData);
+
+          const groqData = await groqResponse.json();
+          blogContent = groqData.choices[0].message.content;
+        } else if (anthropic) {
+          // Fallback to Claude (Anthropic)
+          const msg = await anthropic.messages.create({
+            model: "claude-3-5-sonnet-20241022",
+            max_tokens: 4096,
+            messages: [{ role: "user", content: prompt }],
+          });
+          blogContent = msg.content[0].text;
+        } else {
           throw new Error(
-            `Groq API error: ${groqResponse.status} - ${JSON.stringify(
-              errorData
-            )}`
+            "No AI provider configured. Please set GROQ_API_KEY or ANTHROPIC_API_KEY"
           );
         }
-
-        const groqData = await groqResponse.json();
-        blogContent = groqData.choices[0].message.content;
-      } else if (genAI) {
-        // Fallback to Gemini
-        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        blogContent = response.text();
-      } else {
-        throw new Error(
-          "No AI provider configured. Please set GEMINI_API_KEY, GROQ_API_KEY, or HUGGINGFACE_API_KEY"
-        );
-      }
-    } catch (providerError) {
-      // If primary provider fails, try fallback
-      if (aiProvider !== "gemini" && genAI) {
-        console.log(
-          "Primary provider failed, trying Gemini fallback...",
-          providerError.message
-        );
-        try {
-          const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-          const result = await model.generateContent(prompt);
-          const response = await result.response;
-          blogContent = response.text();
-        } catch (fallbackError) {
-          throw providerError; // Throw original error if fallback also fails
+      } catch (providerError) {
+        // If primary provider fails, try fallback
+        if (aiProvider !== "claude" && anthropic) {
+          console.log(
+            "Primary provider failed, trying Claude fallback...",
+            providerError.message
+          );
+          try {
+            const msg = await anthropic.messages.create({
+              model: "claude-3-5-sonnet-20241022",
+              max_tokens: 4096,
+              messages: [{ role: "user", content: prompt }],
+            });
+            blogContent = msg.content[0].text;
+          } catch (fallbackError) {
+            throw providerError; // Throw original error if fallback also fails
+          }
+        } else {
+          throw providerError;
         }
-      } else {
-        throw providerError;
       }
-    }
-    // STEP A: Create blog row in Supabase (after blogContent exists)
-    const { data: createdBlog, error: blogError } = await supabase
-      .from("blogs")
-      .insert({
-        venue_name: venueName,
-        target_month: targetMonth,
-        week_of_month: weekOfMonth,
-        creator,
-        draft_topic: draftTopic,
-        special_instructions: specialInstructions || null,
-        blog_content: blogContent,
-        status: "draft",
-        user_id: req.user ? req.user.id : null,
-      })
-      .select()
-      .single();
-
-    if (blogError) {
-      console.error("Error inserting blog:", blogError);
-      return res.status(500).json({ error: "Failed to create blog" });
-    }
-
-    blog = createdBlog;
-    if (!blog?.id)
-      throw new Error("Blog insert succeeded but blog.id is missing");
-    // STEP B: Fetch image from Pexels
-    const pexelsQuery = buildPexelsQuery({
-      venueName,
-      draftTopic,
-      specialInstructions,
-    });
-
-    const images = await fetchPexelsImages(pexelsQuery, 3);
-
-    // STEP C: Store ALL images in blog_images
-    if (!images || images.length === 0) {
-      console.log(
-        "No images returned from Pexels, skipping blog_images insert"
-      );
-    } else {
-      const rowsToInsert = images.map((img, index) => ({
-        blog_id: blog.id,
-        user_id: blog.user_id,
-        image_url: img.image_url,
-        image_source: "pexels",
-        image_url: img.image_url,
-        image_source: "pexels",
-        // If user provided a hero image, Pexels images should NOT be hero.
-        // They will be "pexels_gallery_N".
-        section: heroImageName ? `pexels_gallery_${index}` : (index === 0 ? "hero" : `gallery_${index}`),
-        is_latest: true,
-        is_latest: true,
-      }));
-
-      const { error: insertImagesError } = await supabase
-        .from("blog_images")
-        .insert(rowsToInsert);
-
-      if (insertImagesError) {
-        console.error("Error inserting multiple images:", insertImagesError);
-      } else {
-        console.log("Inserted images into blog_images:", rowsToInsert.length);
-      }
-    }
-
-    // STEP C-2: Store User Provided HERO Image
-    if (heroImageName) {
-      // Only one hero image allowed
-      const heroRow = {
-        blog_id: blog.id,
-        user_id: blog.user_id,
-        image_url: heroImageName, // Placeholder filename
-        image_source: "user_placeholder",
-        section: "hero", // Explicitly HERO
-        file_name: heroImageName,
-        is_latest: true,
-      };
-
-      const { error: insertHeroError } = await supabase
-        .from("blog_images")
-        .insert(heroRow);
-
-      if (insertHeroError) console.error("Error inserting user hero image:", insertHeroError);
-      else console.log("Inserted user hero image");
-    }
-
-    // STEP C-3: Store User Provided GALLERY Images
-    if (galleryImageNames && galleryImageNames.length > 0) {
-      const userGalleryRows = galleryImageNames.map((name, index) => ({
-        blog_id: blog.id,
-        user_id: blog.user_id,
-        image_url: name, // Placeholder
-        image_source: "user_placeholder",
-        section: `gallery_${index}`, // Standard gallery section
-        file_name: name,
-        is_latest: true,
-      }));
-
-      const { error: insertGalleryError } = await supabase
-        .from("blog_images")
-        .insert(userGalleryRows);
-
-      if (insertGalleryError) {
-        console.error("Error inserting user gallery images:", insertGalleryError);
-      } else {
-        console.log("Inserted user gallery images:", userGalleryRows.length);
-      }
-    }
-    // 1. Fetch latest images for this blog
-    const { data: blogImages, error: imageFetchError } = await supabase
-      .from("blog_images")
-      .select("*")
-      .eq("blog_id", blog.id)
-      .eq("is_latest", true);
-
-    if (imageFetchError) {
-      throw imageFetchError;
-    }
-
-    // 2. Get image metadata master prompt
-    const imageMetadataPrompt = await getMasterPromptByVenue("image_metadata");
-
-    // 3. Generate metadata using AI
-    const imageMetadata = await generateImageMetadata({
-      images: blogImages,
-      blogContext: blogContent,
-      aiProvider: "groq",
-      apiKey: process.env.GROQ_API_KEY,
-      masterPrompt: imageMetadataPrompt,
-    });
-
-    // 4. Save metadata back to Supabase
-    for (const meta of imageMetadata) {
-      await supabase
-        .from("blog_images")
-        .update({
-          file_name: meta.file_name,
-          title_tag: meta.title_tag,
-          alt_text: meta.alt_text,
-          metadata_generated_at: new Date().toISOString(),
+      // STEP A: Create blog row in Supabase (after blogContent exists)
+      const { data: createdBlog, error: blogError } = await supabase
+        .from("blogs")
+        .insert({
+          venue_name: venueName,
+          target_month: targetMonth,
+          week_of_month: weekOfMonth,
+          creator,
+          draft_topic: draftTopic,
+          special_instructions: specialInstructions || null,
+          blog_content: blogContent,
+          status: "draft",
+          user_id: req.user ? req.user.id : null,
         })
-        .eq("image_url", meta.image_url);
-    }
+        .select()
+        .single();
 
-    const { data: finalImages, error: finalImagesError } = await supabase
-      .from("blog_images")
-      .select(
-        "image_url, file_name, title_tag, alt_text, section, is_latest, created_at"
-      )
-      .eq("blog_id", blog.id)
-      .eq("is_latest", true)
-      .order("created_at", { ascending: true });
+      if (blogError) {
+        console.error("Error inserting blog:", blogError);
+        return res.status(500).json({ error: "Failed to create blog" });
+      }
 
-    if (finalImagesError) {
-      console.error("Error fetching final images:", finalImagesError);
-    }
-
-    res.json({
-      success: true,
-      blogId: blog.id,
-      blogContent,
-      images: finalImages || [],
-      metadata: {
+      blog = createdBlog;
+      if (!blog?.id)
+        throw new Error("Blog insert succeeded but blog.id is missing");
+      // STEP B: Fetch image from Pexels
+      const pexelsQuery = buildPexelsQuery({
         venueName,
-        targetMonth,
-        weekOfMonth,
-        creator,
         draftTopic,
-        generatedAt: new Date().toISOString(),
-      },
-    });
-  } catch (error) {
-    console.error("Error generating blog:", error);
-    res.status(500).json({
-      error: "Failed to generate blog",
-      message: error.message,
-    });
+        specialInstructions,
+      });
+
+      const images = await fetchPexelsImages(pexelsQuery, 3);
+
+      // STEP C: Store ALL images in blog_images
+      if (!images || images.length === 0) {
+        console.log(
+          "No images returned from Pexels, skipping blog_images insert"
+        );
+      } else {
+        const rowsToInsert = images.map((img, index) => ({
+          blog_id: blog.id,
+          user_id: blog.user_id,
+          image_url: img.image_url,
+          image_source: "pexels",
+          image_url: img.image_url,
+          image_source: "pexels",
+          // If user provided a hero image, Pexels images should NOT be hero.
+          // They will be "pexels_gallery_N".
+          section: heroImageName ? `pexels_gallery_${index}` : (index === 0 ? "hero" : `gallery_${index}`),
+          is_latest: true,
+          is_latest: true,
+        }));
+
+        const { error: insertImagesError } = await supabase
+          .from("blog_images")
+          .insert(rowsToInsert);
+
+        if (insertImagesError) {
+          console.error("Error inserting multiple images:", insertImagesError);
+        } else {
+          console.log("Inserted images into blog_images:", rowsToInsert.length);
+        }
+      }
+
+      // STEP C-2: Store User Provided HERO Image
+      if (heroImageName) {
+        // Find the upload data
+        const heroData = uploadedImagesData.find(u => u.section === "hero");
+
+        const heroRow = {
+          blog_id: blog.id,
+          user_id: blog.user_id,
+          image_url: heroData ? heroData.public_url : heroImageName, // Use Public URL
+          image_source: "user_upload", // Changed from 'user_placeholder' to 'user_upload'
+          section: "hero",
+          file_name: heroImageName,
+          is_latest: true,
+        };
+
+        const { error: insertHeroError } = await supabase
+          .from("blog_images")
+          .insert(heroRow);
+
+        if (insertHeroError) console.error("Error inserting user hero image:", insertHeroError);
+        else console.log("Inserted user hero image");
+      }
+
+      // STEP C-3: Store User Provided GALLERY Images
+      if (galleryImageNames && galleryImageNames.length > 0) {
+        const userGalleryRows = [];
+
+        galleryImageNames.forEach((name, index) => {
+          const gData = uploadedImagesData.find(u => u.section === `gallery_${index}`);
+          userGalleryRows.push({
+            blog_id: blog.id,
+            user_id: blog.user_id,
+            image_url: gData ? gData.public_url : name, // Use Public URL
+            image_source: "user_upload",
+            section: `gallery_${index}`,
+            file_name: name,
+            is_latest: true,
+          });
+        });
+
+        const { error: insertGalleryError } = await supabase
+          .from("blog_images")
+          .insert(userGalleryRows);
+
+        if (insertGalleryError) {
+          console.error("Error inserting user gallery images:", insertGalleryError);
+        } else {
+          console.log("Inserted user gallery images:", userGalleryRows.length);
+        }
+      }
+
+      // 1. Fetch latest images for this blog (Pexels and user_placeholder)
+      const { data: blogImages, error: imageFetchError } = await supabase
+        .from("blog_images")
+        .select("*")
+        .eq("blog_id", blog.id)
+        .eq("is_latest", true);
+
+      if (imageFetchError) {
+        throw imageFetchError;
+      }
+
+      // 2. Get image metadata master prompt
+      const imageMetadataPrompt = await getMasterPromptByVenue("image_metadata");
+
+      // 3. Generate metadata using AI
+      // Merge uploaded base64 data into blogImages for Vision analysis
+      // AND fetch Pexels images to convert to base64 so Vision can see them too
+      const imagesForAI = await Promise.all(blogImages.map(async (img) => {
+        // 1. Check if we already have a user upload for this section
+        const uploadData = uploadedImagesData.find(u => u.section === img.section);
+        if (uploadData) {
+          return {
+            ...img,
+            image_url: uploadData.image_url,
+            is_base64: true
+          };
+        }
+
+        // 2. If it's a Pexels image (starts with http), fetch it to get Base64
+        if (img.image_url && img.image_url.startsWith("http")) {
+          try {
+            console.log(`Fetching Pexels image for Vision analysis: ${img.image_url}`);
+            const imgResp = await fetch(img.image_url);
+            if (imgResp.ok) {
+              const arrayBuffer = await imgResp.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
+              const b64 = buffer.toString("base64");
+              // Guess mime type or default to jpeg (Pexels usually serves jpegs)
+              return {
+                ...img,
+                image_url: `data:image/jpeg;base64,${b64}`,
+                is_base64: true //transits image into 64 binary encoding system
+              };
+            }
+          } catch (err) {
+            console.error("Failed to fetch Pexels image for vision:", err);
+          }
+        }
+
+        // Fallback: just return original (will be treated as text-only analysis)
+        return {
+          ...img,
+          is_base64: false
+        };
+      }));
+
+      const imageMetadata = await generateImageMetadata({
+        images: imagesForAI,
+        blogContext: blogContent,
+        aiProvider: process.env.GROQ_API_KEY ? "groq" : "claude",
+        apiKey: process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY,
+        anthropicClient: anthropic,
+        masterPrompt: imageMetadataPrompt,
+      });
+
+
+      // 4. Save metadata back to Supabase
+      for (const meta of imageMetadata) {
+        // We match by original image_url (which for user uploads was the filename)
+        // OR by section if available in metadata (safest if we pass it through)
+
+        // Note: generateImageMetadata returns items with 'image_url' property from input.
+        // For uploads, we passed base64 as image_url in imagesForAI, 
+        // BUT the service (which I will update) should preserve the *original* identity 
+        // or we need to map back.
+
+        // Actually, easiest is to trust the index/array order if service preserves it.
+        // But let's look at how we update.
+        // The previous code matched by `eq("image_url", meta.image_url)`.
+
+        // If I pass base64 as image_url, meta.image_url will be base64. 
+        // That won't match the DB content (filename).
+
+        // Fix: In imagesForAI above, I kept `img` properties but OVERWROTE `image_url`.
+        // I should keep the original identifier separate.
+
+        // Revised Strategy in Service:
+        // Service receives { ...img, base64_content: ... }
+        // Service returns { ...img (original), ...metadata }
+
+        // So here in the loop:
+        await supabase
+          .from("blog_images")
+          .update({
+            file_name: meta.file_name,
+            title_tag: meta.title_tag,
+            alt_text: meta.alt_text,
+            metadata_generated_at: new Date().toISOString(),
+          })
+          // Start with safe ID matching if available (we have `id` in blogImages)
+          .eq("id", meta.id);
+      }
+
+      const { data: finalImages, error: finalImagesError } = await supabase
+        .from("blog_images")
+        .select(
+          "image_url, file_name, title_tag, alt_text, section, is_latest, created_at"
+        )
+        .eq("blog_id", blog.id)
+        .eq("is_latest", true)
+        .order("created_at", { ascending: true });
+
+      if (finalImagesError) throw finalImagesError;
+
+      // Merge base64 back into response so frontend can display them!
+      const imagesWithPreview = finalImages.map(img => {
+        const uploadData = uploadedImagesData.find(u => u.section === img.section);
+        if (uploadData) {
+          return { ...img, image_url: uploadData.image_url }; // Return base64 for display
+        }
+        return img;
+      });
+
+      res.status(200).json({
+        message: "Blog generated successfully",
+        blogContent,
+        blogId: blog.id,
+        images: imagesWithPreview,
+      });
+      return; // Ensure we stop here
+    } catch (error) {
+      console.error("Error generating blog:", error);
+      res.status(500).json({ error: error.message });
+    }
   }
-});
+);
+
 
 app.post("/api/refresh-image", async (req, res) => {
   try {

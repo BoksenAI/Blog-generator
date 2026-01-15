@@ -5,6 +5,7 @@ import { API_Base } from "./apiConfig";
 import Header from "./components/Header";
 import Login from "./components/Login";
 import History from "./components/History";
+import AuthGateModal from "./components/AuthGateModal";
 
 function App() {
   const [formData, setFormData] = useState({
@@ -14,9 +15,8 @@ function App() {
     creator: "",
     draftTopic: "",
     specialInstructions: "",
-    specialInstructions: "",
-    heroImageName: "",
-    galleryImageNames: [],
+    heroImageFile: null,
+    galleryImageFiles: [],
   });
 
   const [blogContent, setBlogContent] = useState("");
@@ -27,6 +27,12 @@ function App() {
 
   // Auth & View State
   const [session, setSession] = useState(null);
+
+  // Auth gate modal (shown when user tries to Generate / Download while logged out)
+  const [showAuthGate, setShowAuthGate] = useState(false);
+  const [authGateReason, setAuthGateReason] = useState("generate"); // "generate" | "download"
+  const [pendingAction, setPendingAction] = useState(null); // function to run after “Continue as guest”
+
   const [showLogin, setShowLogin] = useState(false);
   const [loginMode, setLoginMode] = useState("login");
   const [showHistory, setShowHistory] = useState(false);
@@ -52,18 +58,18 @@ function App() {
     const file = e.target.files && e.target.files[0];
     setFormData((prev) => ({
       ...prev,
-      heroImageName: file ? file.name : "",
+      heroImageFile: file || null,
     }));
   };
 
   const handleGalleryImagesChange = (e) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      const newFileNames = Array.from(files).map(file => file.name);
+      const newFiles = Array.from(files);
       setFormData((prev) => ({
         ...prev,
-        // Append new files, avoiding duplicates
-        galleryImageNames: [...new Set([...prev.galleryImageNames, ...newFileNames])],
+        // Append new files
+        galleryImageFiles: [...prev.galleryImageFiles, ...newFiles],
       }));
     }
   };
@@ -71,7 +77,9 @@ function App() {
   const removeGalleryImage = (indexToRemove) => {
     setFormData((prev) => ({
       ...prev,
-      galleryImageNames: prev.galleryImageNames.filter((_, index) => index !== indexToRemove),
+      galleryImageFiles: prev.galleryImageFiles.filter(
+        (_, index) => index !== indexToRemove
+      ),
     }));
   };
 
@@ -83,9 +91,7 @@ function App() {
     }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    // Generate Blog
+  const actuallyGenerateBlog = async () => {
     try {
       setLoading(true);
       setError("");
@@ -93,17 +99,33 @@ function App() {
       setImages([]);
 
       const headers = {
-        "Content-Type": "application/json",
+        // Don't set Content-Type for FormData (browser sets it automatically)
       };
 
       if (session?.access_token) {
         headers["Authorization"] = `Bearer ${session.access_token}`;
       }
 
+      const body = new FormData();
+      body.append("venueName", formData.venueName);
+      body.append("targetMonth", formData.targetMonth);
+      body.append("weekOfMonth", formData.weekOfMonth);
+      body.append("creator", formData.creator);
+      body.append("draftTopic", formData.draftTopic);
+      body.append("specialInstructions", formData.specialInstructions);
+
+      if (formData.heroImageFile) {
+        body.append("heroImage", formData.heroImageFile);
+      }
+
+      formData.galleryImageFiles.forEach((file) => {
+        body.append("galleryImages", file);
+      });
+
       const response = await fetch(`${API_Base}/api/generate-blog`, {
         method: "POST",
         headers,
-        body: JSON.stringify(formData),
+        body,
       });
 
       const data = await response.json();
@@ -113,13 +135,30 @@ function App() {
       }
 
       setBlogContent(data.blogContent);
-      setImages(data.images || []); // <-- save images + metadata returned from backend
+      setImages(data.images || []);
       setBlogId(data.blogId);
     } catch (err) {
       setError(err.message || "An error occurred while generating the blog");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    // If user is not logged in, show auth gate modal first
+    if (!session) {
+      setAuthGateReason("generate");
+      setPendingAction(() => () => {
+        actuallyGenerateBlog();
+      });
+      setShowAuthGate(true);
+      return;
+    }
+
+    // Logged-in users generate normally
+    await actuallyGenerateBlog();
   };
 
   const handleCustomQueryChange = (section, value) => {
@@ -172,6 +211,16 @@ function App() {
   }
 
   const downloadDraft = () => {
+    // If user is not logged in, show gate modal first
+    if (!session) {
+      setAuthGateReason("download");
+      setPendingAction(() => () => {
+        downloadDraft();
+      });
+      setShowAuthGate(true);
+      return;
+    }
+
     if (!blogContent) {
       alert("No blog content to download. Please generate a blog first.");
       return;
@@ -201,6 +250,81 @@ Generated: ${new Date().toLocaleString()}
     URL.revokeObjectURL(url);
   };
 
+  const downloadHtml = () => {
+    // If user is not logged in, show gate modal first
+    if (!session) {
+      setAuthGateReason("download");
+      setPendingAction(() => () => {
+        downloadHtml();
+      });
+      setShowAuthGate(true);
+      return;
+    }
+
+    if (!blogContent) {
+      alert("No blog content to download. Please generate a blog first.");
+      return;
+    }
+
+    // Build HTML Content
+    let htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${formData.venueName} - Blog Draft</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; color: #333; }
+        h1 { color: #222; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .metadata { background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 30px; font-size: 0.9em; color: #666; }
+        .content { white-space: pre-wrap; margin-bottom: 40px; }
+        .images-section { border-top: 2px solid #eee; padding-top: 20px; margin-top: 40px; }
+        .image-card { border: 1px solid #ddd; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
+        img { max-width: 100%; height: auto; border-radius: 4px; display: block; margin-bottom: 10px; }
+        .img-meta { font-size: 0.9em; color: #555; }
+        .img-meta strong { color: #333; }
+    </style>
+</head>
+<body>
+    <h1>${formData.venueName} - Blog Draft</h1>
+    
+    <div class="metadata">
+        <p><strong>Target Month:</strong> ${formData.targetMonth}</p>
+        <p><strong>Week of Month:</strong> ${formData.weekOfMonth}</p>
+        <p><strong>Creator:</strong> ${formData.creator}</p>
+        <p><strong>Draft Topic:</strong> ${formData.draftTopic}</p>
+        <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+    </div>
+
+    <div class="content">${blogContent}</div>
+
+    <div class="images-section">
+        <h2>Generated Images + Metadata</h2>
+        ${images.map(img => `
+        <div class="image-card">
+            ${img.image_url ? `<img src="${img.image_url}" alt="${img.alt_text || ''}">` : '<p><em>No image source available</em></p>'}
+            <div class="img-meta">
+                <div><strong>File Name:</strong> ${img.file_name}</div>
+                <div><strong>Title Tag:</strong> ${img.title_tag || 'N/A'}</div>
+                <div><strong>Alt Text:</strong> ${img.alt_text || 'N/A'}</div>
+            </div>
+        </div>
+        `).join('')}
+    </div>
+</body>
+</html>`;
+
+    const blob = new Blob([htmlContent], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${formData.venueName.replace(/\s+/g, "_")}_Draft.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="app">
       <Header
@@ -218,11 +342,28 @@ Generated: ${new Date().toLocaleString()}
         setShowHistory={setShowHistory}
       />
 
+      <AuthGateModal
+        isOpen={showAuthGate}
+        reason={authGateReason}
+        onClose={() => setShowAuthGate(false)}
+        onSignIn={() => {
+          setShowAuthGate(false);
+          setLoginMode("login");
+          setShowLogin(true);
+        }}
+        onSignUp={() => {
+          setShowAuthGate(false);
+          setLoginMode("signup");
+          setShowLogin(true);
+        }}
+        onContinueAsGuest={() => {
+          setShowAuthGate(false);
+          if (pendingAction) pendingAction();
+        }}
+      />
+
       {showLogin && (
-        <Login
-          initialMode={loginMode}
-          onClose={() => setShowLogin(false)}
-        />
+        <Login initialMode={loginMode} onClose={() => setShowLogin(false)} />
       )}
 
       <div className="container">
@@ -231,7 +372,9 @@ Generated: ${new Date().toLocaleString()}
         ) : (
           <>
             <h1 className="title">Blog Generator</h1>
-            <p className="subtitle">Generate professional blog posts using AI</p>
+            <p className="subtitle">
+              Generate professional blog posts using AI
+            </p>
 
             <form onSubmit={handleSubmit} className="form">
               <div className="form-group">
@@ -305,7 +448,9 @@ Generated: ${new Date().toLocaleString()}
               </div>
 
               <div className="form-group">
-                <label htmlFor="specialInstructions">Special Instructions</label>
+                <label htmlFor="specialInstructions">
+                  Special Instructions
+                </label>
                 <textarea
                   id="specialInstructions"
                   name="specialInstructions"
@@ -328,16 +473,18 @@ Generated: ${new Date().toLocaleString()}
                   <p className="image-dropbox-help">
                     Select a single Hero Image to appear at the top.
                   </p>
-                  {formData.heroImageName && (
+                  {formData.heroImageFile && (
                     <p className="image-selected">
-                      Selected: <strong>{formData.heroImageName}</strong>
+                      Selected: <strong>{formData.heroImageFile.name}</strong>
                     </p>
                   )}
                 </div>
               </div>
 
               <div className="form-group">
-                <label htmlFor="galleryImages">Gallery / Section Images (optional)</label>
+                <label htmlFor="galleryImages">
+                  Gallery / Section Images (optional)
+                </label>
                 <div className="image-dropbox">
                   <input
                     id="galleryImages"
@@ -349,13 +496,13 @@ Generated: ${new Date().toLocaleString()}
                   <p className="image-dropbox-help">
                     Drag and drop multiple images for the blog body.
                   </p>
-                  {formData.galleryImageNames.length > 0 && (
+                  {formData.galleryImageFiles.length > 0 && (
                     <div className="image-selected-list">
                       <p>Selected Gallery Images:</p>
                       <ul>
-                        {formData.galleryImageNames.map((name, idx) => (
+                        {formData.galleryImageFiles.map((file, idx) => (
                           <li key={idx} className="file-list-item">
-                            {name}
+                            {file.name}
                             <button
                               type="button"
                               className="remove-file-btn"
@@ -387,7 +534,10 @@ Generated: ${new Date().toLocaleString()}
                 <div className="blog-header">
                   <h2>Generated Blog</h2>
                   <button onClick={downloadDraft} className="download-btn">
-                    Download Draft
+                    Download Draft (MD)
+                  </button>
+                  <button onClick={downloadHtml} className="download-btn" style={{ marginLeft: '10px', background: '#007bff' }}>
+                    Download HTML
                   </button>
                 </div>
                 <div className="blog-content">{blogContent}</div>
@@ -396,12 +546,19 @@ Generated: ${new Date().toLocaleString()}
                     <h3>Generated Images + Metadata</h3>
 
                     {images.map((img) => (
-                      <div key={img.image_url + img.section} className="image-card">
+                      <div
+                        key={img.image_url + img.section}
+                        className="image-card"
+                      >
                         {img.image_source === "user_placeholder" ? (
                           <div className="user-image-placeholder">
                             <div className="placeholder-icon">📷</div>
-                            <span>User Image: <strong>{img.file_name}</strong></span>
-                            <small>(Not uploaded, metadata generated only)</small>
+                            <span>
+                              User Image: <strong>{img.file_name}</strong>
+                            </span>
+                            <small>
+                              (Not uploaded, metadata generated only)
+                            </small>
                           </div>
                         ) : (
                           <img
@@ -429,7 +586,10 @@ Generated: ${new Date().toLocaleString()}
                             className="custom-query-input"
                             value={customQueries[img.section] || ""}
                             onChange={(e) =>
-                              handleCustomQueryChange(img.section, e.target.value)
+                              handleCustomQueryChange(
+                                img.section,
+                                e.target.value
+                              )
                             }
                           />
                           <button

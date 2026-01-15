@@ -11,7 +11,7 @@ export async function generateImageMetadata({
     const content = [
         {
             type: "text",
-            text: `${masterPrompt}\n\nBlog context:\n${blogContext}\n\nInstructions: Analyze the provided images and generate metadata (file_name, title_tag, alt_text) for each. \n- PRIORITIZE VISUAL DETAILS: Describe exactly what you see in the image.\n- Do NOT assume the style or cuisine solely based on the 'Venue Name' (e.g. 'Tokyo' does not automatically mean 'Japanese style' if the image shows modern industrial decor).\n- Return ONLY a JSON array with objects containing 'id' (from input) and the generated fields.`,
+            text: `${masterPrompt}\n\nBlog context:\n${blogContext}\n\nInstructions: Analyze the provided images and generate metadata (file_name, title_tag, alt_text) for each. \n- PRIORITIZE VISUAL DETAILS: Describe exactly what you see in the image (colors, objects, lighting, style).\n- STRICTLY VISUAL: Do NOT assume the image depicts the 'Venue Name' mentioned in the context. If the image is a generic stock photo or interior, describe it generically (e.g., 'Modern wooden table with cocktails' instead of 'Cedros signature cocktails').\n- Do NOT include the Venue Name in the 'Alt Text' or 'Title Tag' unless the name is explicitly visible in the image text.\n- Return ONLY a valid JSON object with a single key "images" containing an array of objects. Each object must have 'id' (from input) and the generated fields. Example: { "images": [{ "id": "...", "file_name": "...", "title_tag": "...", "alt_text": "..." }] }`,
         },
     ];
 
@@ -45,11 +45,11 @@ export async function generateImageMetadata({
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                model: "meta-llama/llama-4-scout-17b-16e-instruct", // Correct full ID from Groq API list
+                model: "meta-llama/llama-4-scout-17b-16e-instruct", // Correct vision model
                 messages: [{ role: "user", content: content }],
                 temperature: 0.2,
                 max_tokens: 2048,
-                response_format: { type: "json_object" }, // Enforce JSON
+                response_format: { type: "json_object" }, // Enforce JSON object
             }),
         }
     );

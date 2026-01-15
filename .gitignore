@@ -7,3 +7,5 @@ build/
 .agent/
 .netlify/
 deno.lock
+debug_groq_vision.js
+groq_models.json

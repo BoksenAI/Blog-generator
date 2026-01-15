@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { Anthropic } from "@anthropic-ai/sdk";
 import { fetchPexelsImages } from "./services/pexelsService.js";
 import { supabase } from "./supabaseClient.js";
 import { generateImageMetadata } from "./services/imageMetadataService.js";
@@ -74,9 +74,36 @@ async function getVenueSpecificPrompt(venue) {
 }
 
 // Initialize AI providers
-const genAI = process.env.GEMINI_API_KEY
-  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
+
+// Helper to ensure storage bucket exists
+async function ensureBucketExists() {
+  try {
+    const output = await supabase.storage.getBucket('blog-images');
+    if (output.error && output.error.message.includes('not found')) {
+      console.log("Bucket 'blog-images' not found. Creating...");
+      const { data, error } = await supabase.storage.createBucket('blog-images', {
+        public: true,
+        fileSizeLimit: 10485760, // 10MB
+        allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+      });
+      if (error) {
+        console.error("Failed to create bucket:", error);
+      } else {
+        console.log("Created 'blog-images' bucket successfully.");
+      }
+    } else {
+      console.log("Bucket 'blog-images' exists.");
+    }
+  } catch (e) {
+    console.error("Error checking bucket:", e);
+  }
+}
+
+// Check bucket on startup
+ensureBucketExists();
 
 // Debug endpoint to list available models
 app.get("/api/list-models", async (req, res) => {
@@ -159,11 +186,43 @@ app.post(
       let galleryImageNames = [];
       let uploadedImagesData = []; // To store { url (base64 for vision), filename, section }
 
+      const uploadToSupabase = async (file) => {
+        const timestamp = Date.now();
+        // Sanitize filename
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
+        const path = `uploads/${timestamp}_${safeName}`;
+
+        const { data, error } = await supabase.storage
+          .from("blog-images")
+          .upload(path, file.buffer, {
+            contentType: file.mimetype,
+            upsert: false,
+          });
+
+        if (error) {
+          console.error("Supabase Storage Upload Error:", error);
+          throw error;
+        }
+
+        // Get Public URL
+        const { data: publicData } = supabase.storage
+          .from("blog-images")
+          .getPublicUrl(path);
+
+        return publicData.publicUrl;
+      };
+
       if (req.files["heroImage"] && req.files["heroImage"][0]) {
         const file = req.files["heroImage"][0];
         heroImageName = file.originalname;
+
+        // Upload to Storage
+        const publicUrl = await uploadToSupabase(file);
+        const b64 = fileToBase64(file); // Still need base64 for Vision analysis immediately
+
         uploadedImagesData.push({
-          image_url: fileToBase64(file), // Provide base64 for Vision analysis
+          image_url: b64, // Keep base64 for IMMEDIATE vision analysis (metadata generation)
+          public_url: publicUrl, // STORE this in DB for persistence
           file_name: heroImageName,
           section: "hero",
           is_user_upload: true
@@ -171,16 +230,20 @@ app.post(
       }
 
       if (req.files["galleryImages"]) {
-        req.files["galleryImages"].forEach((file, index) => {
+        // Use Promise.all for parallel uploads
+        await Promise.all(req.files["galleryImages"].map(async (file, index) => {
           const b64 = fileToBase64(file);
+          const publicUrl = await uploadToSupabase(file);
+
           galleryImageNames.push(file.originalname);
           uploadedImagesData.push({
             image_url: b64,
+            public_url: publicUrl,
             file_name: file.originalname,
             section: `gallery_${index}`,
             is_user_upload: true
           });
-        });
+        }));
       }
 
       if (!venueName || !targetMonth || !weekOfMonth || !creator || !draftTopic) {
@@ -274,29 +337,33 @@ app.post(
 
           const groqData = await groqResponse.json();
           blogContent = groqData.choices[0].message.content;
-        } else if (genAI) {
-          // Fallback to Gemini
-          const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-          const result = await model.generateContent(prompt);
-          const response = await result.response;
-          blogContent = response.text();
+        } else if (anthropic) {
+          // Fallback to Claude (Anthropic)
+          const msg = await anthropic.messages.create({
+            model: "claude-3-5-sonnet-20241022",
+            max_tokens: 4096,
+            messages: [{ role: "user", content: prompt }],
+          });
+          blogContent = msg.content[0].text;
         } else {
           throw new Error(
-            "No AI provider configured. Please set GEMINI_API_KEY, GROQ_API_KEY, or HUGGINGFACE_API_KEY"
+            "No AI provider configured. Please set GROQ_API_KEY or ANTHROPIC_API_KEY"
           );
         }
       } catch (providerError) {
         // If primary provider fails, try fallback
-        if (aiProvider !== "gemini" && genAI) {
+        if (aiProvider !== "claude" && anthropic) {
           console.log(
-            "Primary provider failed, trying Gemini fallback...",
+            "Primary provider failed, trying Claude fallback...",
             providerError.message
           );
           try {
-            const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-            const result = await model.generateContent(prompt);
-            const response = await result.response;
-            blogContent = response.text();
+            const msg = await anthropic.messages.create({
+              model: "claude-3-5-sonnet-20241022",
+              max_tokens: 4096,
+              messages: [{ role: "user", content: prompt }],
+            });
+            blogContent = msg.content[0].text;
           } catch (fallbackError) {
             throw providerError; // Throw original error if fallback also fails
           }
@@ -371,12 +438,14 @@ app.post(
 
       // STEP C-2: Store User Provided HERO Image
       if (heroImageName) {
-        // Only one hero image allowed
+        // Find the upload data
+        const heroData = uploadedImagesData.find(u => u.section === "hero");
+
         const heroRow = {
           blog_id: blog.id,
           user_id: blog.user_id,
-          image_url: heroImageName, // Storing filename in DB for now (cheap storage)
-          image_source: "user_placeholder",
+          image_url: heroData ? heroData.public_url : heroImageName, // Use Public URL
+          image_source: "user_upload", // Changed from 'user_placeholder' to 'user_upload'
           section: "hero",
           file_name: heroImageName,
           is_latest: true,
@@ -392,15 +461,20 @@ app.post(
 
       // STEP C-3: Store User Provided GALLERY Images
       if (galleryImageNames && galleryImageNames.length > 0) {
-        const userGalleryRows = galleryImageNames.map((name, index) => ({
-          blog_id: blog.id,
-          user_id: blog.user_id,
-          image_url: name, // Storing filename
-          image_source: "user_placeholder",
-          section: `gallery_${index}`,
-          file_name: name,
-          is_latest: true,
-        }));
+        const userGalleryRows = [];
+
+        galleryImageNames.forEach((name, index) => {
+          const gData = uploadedImagesData.find(u => u.section === `gallery_${index}`);
+          userGalleryRows.push({
+            blog_id: blog.id,
+            user_id: blog.user_id,
+            image_url: gData ? gData.public_url : name, // Use Public URL
+            image_source: "user_upload",
+            section: `gallery_${index}`,
+            file_name: name,
+            is_latest: true,
+          });
+        });
 
         const { error: insertGalleryError } = await supabase
           .from("blog_images")
@@ -472,8 +546,9 @@ app.post(
       const imageMetadata = await generateImageMetadata({
         images: imagesForAI,
         blogContext: blogContent,
-        aiProvider: "groq",
-        apiKey: process.env.GROQ_API_KEY,
+        aiProvider: process.env.GROQ_API_KEY ? "groq" : "claude",
+        apiKey: process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY,
+        anthropicClient: anthropic,
         masterPrompt: imageMetadataPrompt,
       });
 

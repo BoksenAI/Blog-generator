@@ -307,16 +307,24 @@ Generated: ${new Date().toLocaleString()}
 
           <div class="images-section">
             <h2>Generated Images + Metadata</h2>
-            ${images.map(img => `
+            ${images
+              .map(
+                (img) => `
         <div class="image-card">
-            ${img.image_url ? `<img src="${img.image_url}" alt="${img.alt_text || ''}">` : '<p><em>No image source available</em></p>'}
+            ${
+              img.image_url
+                ? `<img src="${img.image_url}" alt="${img.alt_text || ""}">`
+                : "<p><em>No image source available</em></p>"
+            }
             <div class="img-meta">
                 <div><strong>File Name:</strong> ${img.file_name}</div>
-                <div><strong>Title Tag:</strong> ${img.title_tag || 'N/A'}</div>
-                <div><strong>Alt Text:</strong> ${img.alt_text || 'N/A'}</div>
+                <div><strong>Title Tag:</strong> ${img.title_tag || "N/A"}</div>
+                <div><strong>Alt Text:</strong> ${img.alt_text || "N/A"}</div>
             </div>
         </div>
-        `).join('')}
+        `
+              )
+              .join("")}
           </div>
         </body>
       </html>`;
@@ -543,11 +551,20 @@ Generated: ${new Date().toLocaleString()}
                   <button onClick={downloadDraft} className="download-btn">
                     Download Draft (MD)
                   </button>
-                  <button onClick={downloadHtml} className="download-btn" style={{ marginLeft: '10px', background: '#007bff' }}>
+                  <button
+                    onClick={downloadHtml}
+                    className="download-btn"
+                    style={{ marginLeft: "10px", background: "#007bff" }}
+                  >
                     Download HTML
                   </button>
                 </div>
-                <div className="blog-content">{blogContent}</div>
+                <div
+                  className="blog-content"
+                  dangerouslySetInnerHTML={{
+                    __html: marked.parse(blogContent),
+                  }}
+                />
                 {images.length > 0 && (
                   <div className="image-preview">
                     <h3>Generated Images + Metadata</h3>

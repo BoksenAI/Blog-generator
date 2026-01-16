@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import { supabase } from "./supabase";
+import { marked } from "marked";
 import { API_Base } from "./apiConfig";
 import Header from "./components/Header";
 import Login from "./components/Login";
@@ -103,7 +104,7 @@ function App() {
       };
 
       if (session?.access_token) {
-        headers["Authorization"] = `Bearer ${session.access_token}`;
+        headers["Authorization"] = `Bearer ${session.access_token} `;
       }
 
       const body = new FormData();
@@ -231,19 +232,19 @@ Venue Name: ${formData.venueName}
 Target Month: ${formData.targetMonth}
 Week of Month: ${formData.weekOfMonth}
 Creator: ${formData.creator}
-Draft Topic/Title: ${formData.draftTopic}
+Draft Topic / Title: ${formData.draftTopic}
 Generated: ${new Date().toLocaleString()}
 
 ---
 
-`;
+  `;
 
     const content = metadata + blogContent;
     const blob = new Blob([content], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${formData.venueName.replace(/\s+/g, "_")}_Draft.md`;
+    a.download = `${formData.venueName.replace(/\s+/g, "_")} _Draft.md`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -267,40 +268,46 @@ Generated: ${new Date().toLocaleString()}
     }
 
     // Build HTML Content
-    let htmlContent = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${formData.venueName} - Blog Draft</title>
-    <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; color: #333; }
-        h1 { color: #222; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        .metadata { background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 30px; font-size: 0.9em; color: #666; }
-        .content { white-space: pre-wrap; margin-bottom: 40px; }
-        .images-section { border-top: 2px solid #eee; padding-top: 20px; margin-top: 40px; }
-        .image-card { border: 1px solid #ddd; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
-        img { max-width: 100%; height: auto; border-radius: 4px; display: block; margin-bottom: 10px; }
-        .img-meta { font-size: 0.9em; color: #555; }
-        .img-meta strong { color: #333; }
-    </style>
-</head>
-<body>
-    <h1>${formData.venueName} - Blog Draft</h1>
-    
-    <div class="metadata">
-        <p><strong>Target Month:</strong> ${formData.targetMonth}</p>
-        <p><strong>Week of Month:</strong> ${formData.weekOfMonth}</p>
-        <p><strong>Creator:</strong> ${formData.creator}</p>
-        <p><strong>Draft Topic:</strong> ${formData.draftTopic}</p>
-        <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
-    </div>
+    const contentHtml = marked.parse(blogContent);
 
-    <div class="content">${blogContent}</div>
+    let htmlContent = `< !DOCTYPE html >
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${formData.venueName} - Blog Draft</title>
+          <style>
+            body {font - family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; color: #333; }
+            h1 {color: #222; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+            h2 {margin - top: 30px; color: #444; }
+            a {color: #007bff; text-decoration: none; }
+            a:hover {text - decoration: underline; }
+            strong {color: #000; }
+            .metadata {background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 30px; font-size: 0.9em; color: #666; }
+            .content {margin - bottom: 40px; }
+            .images-section {border - top: 2px solid #eee; padding-top: 20px; margin-top: 40px; }
+            .image-card {border: 1px solid #ddd; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
+            img {max - width: 100%; height: auto; border-radius: 4px; display: block; margin-bottom: 10px; }
+            .img-meta {font - size: 0.9em; color: #555; }
+            .img-meta strong {color: #333; }
+          </style>
+        </head>
+        <body>
+          <h1>${formData.venueName} - Blog Draft</h1>
 
-    <div class="images-section">
-        <h2>Generated Images + Metadata</h2>
-        ${images.map(img => `
+          <div class="metadata">
+            <p><strong>Target Month:</strong> ${formData.targetMonth}</p>
+            <p><strong>Week of Month:</strong> ${formData.weekOfMonth}</p>
+            <p><strong>Creator:</strong> ${formData.creator}</p>
+            <p><strong>Draft Topic:</strong> ${formData.draftTopic}</p>
+            <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+          </div>
+
+          <div class="content">${contentHtml}</div>
+
+          <div class="images-section">
+            <h2>Generated Images + Metadata</h2>
+            ${images.map(img => `
         <div class="image-card">
             ${img.image_url ? `<img src="${img.image_url}" alt="${img.alt_text || ''}">` : '<p><em>No image source available</em></p>'}
             <div class="img-meta">
@@ -310,9 +317,9 @@ Generated: ${new Date().toLocaleString()}
             </div>
         </div>
         `).join('')}
-    </div>
-</body>
-</html>`;
+          </div>
+        </body>
+      </html>`;
 
     const blob = new Blob([htmlContent], { type: "text/html" });
     const url = URL.createObjectURL(blob);

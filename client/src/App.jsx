@@ -7,6 +7,7 @@ import Header from "./components/Header";
 import Login from "./components/Login";
 import History from "./components/History";
 import AuthGateModal from "./components/AuthGateModal";
+import ResetPassword from "./components/ResetPassword";
 
 function App() {
   const [formData, setFormData] = useState({
@@ -104,7 +105,7 @@ function App() {
       };
 
       if (session?.access_token) {
-        headers["Authorization"] = `Bearer ${session.access_token} `;
+        headers["Authorization"] = `Bearer ${session.access_token}`;
       }
 
       const body = new FormData();
@@ -339,6 +340,12 @@ Generated: ${new Date().toLocaleString()}
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  const isResetPage = window.location.pathname === "/reset-password";
+
+  if (isResetPage) {
+    return <ResetPassword />;
+  }
 
   return (
     <div className="app">

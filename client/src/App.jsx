@@ -207,10 +207,52 @@ function App() {
       setImages(data.images || []);
     } catch (e) {
       setError(e.message);
-    } finally {
-      setRefreshingSection(null);
     }
-  }
+  };
+
+  const [isAddingImage, setIsAddingImage] = useState(false);
+
+  const handleAddImage = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!session) {
+      // If not logged in, we could gate this, but let's assume valid session for now or handle error
+      alert("Please login to add images.");
+      return;
+    }
+
+    try {
+      setIsAddingImage(true);
+      const headers = {};
+      if (session?.access_token) {
+        headers["Authorization"] = `Bearer ${session.access_token}`;
+      }
+
+      const body = new FormData();
+      body.append("blogId", blogId);
+      body.append("image", file);
+
+      const resp = await fetch(`${API_Base}/api/add-image`, {
+        method: "POST",
+        headers,
+        body
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Failed to add image");
+
+      // Append new image to list
+      setImages(prev => [...prev, data.image]);
+
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsAddingImage(false);
+      // Reset file input
+      e.target.value = null;
+    }
+  };
 
   const downloadDraft = () => {
     // If user is not logged in, show gate modal first
@@ -309,13 +351,12 @@ Generated: ${new Date().toLocaleString()}
           <div class="images-section">
             <h2>Generated Images + Metadata</h2>
             ${images
-              .map(
-                (img) => `
+        .map(
+          (img) => `
         <div class="image-card">
-            ${
-              img.image_url
-                ? `<img src="${img.image_url}" alt="${img.alt_text || ""}">`
-                : "<p><em>No image source available</em></p>"
+            ${img.image_url
+              ? `<img src="${img.image_url}" alt="${img.alt_text || ""}">`
+              : "<p><em>No image source available</em></p>"
             }
             <div class="img-meta">
                 <div><strong>File Name:</strong> ${img.file_name}</div>
@@ -324,8 +365,8 @@ Generated: ${new Date().toLocaleString()}
             </div>
         </div>
         `
-              )
-              .join("")}
+        )
+        .join("")}
           </div>
         </body>
       </html>`;
@@ -574,7 +615,29 @@ Generated: ${new Date().toLocaleString()}
                 />
                 {images.length > 0 && (
                   <div className="image-preview">
-                    <h3>Generated Images + Metadata</h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>Generated Images + Metadata</h3>
+                      <label className="add-image-btn" style={{
+                        cursor: 'pointer',
+                        background: '#28a745',
+                        color: 'white',
+                        padding: '8px 12px',
+                        borderRadius: '4px',
+                        fontSize: '0.9em',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}>
+                        {isAddingImage ? 'Uploading...' : 'Add Image +'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={handleAddImage}
+                          disabled={isAddingImage}
+                        />
+                      </label>
+                    </div>
 
                     {images.map((img) => (
                       <div
@@ -645,6 +708,7 @@ Generated: ${new Date().toLocaleString()}
       </div>
     </div>
   );
+
 }
 
 export default App;

@@ -625,6 +625,113 @@ app.post(
 );
 
 
+
+// Endpoint to add a new user image to an existing blog
+app.post(
+  "/api/add-image",
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      const { blogId } = req.body;
+      const file = req.file;
+
+      if (!blogId || !file) {
+        return res.status(400).json({ error: "Missing blogId or image file" });
+      }
+
+      // 1. Upload to Supabase Storage
+      const timestamp = Date.now();
+      const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
+      const path = `uploads/${timestamp}_${safeName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("blog-images")
+        .upload(path, file.buffer, {
+          contentType: file.mimetype,
+          upsert: false,
+        });
+
+      if (uploadError) {
+        throw new Error(`Storage upload failed: ${uploadError.message}`);
+      }
+
+      const { data: publicData } = supabase.storage
+        .from("blog-images")
+        .getPublicUrl(path);
+
+      const publicUrl = publicData.publicUrl;
+
+      // 2. Generate Metadata
+      const { data: blogData, error: blogError } = await supabase
+        .from("blogs")
+        .select("blog_content, user_id")
+        .eq("id", blogId)
+        .single();
+
+      if (blogError || !blogData) {
+        throw new Error("Blog not found");
+      }
+
+      const b64 = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+
+      const imageInputForAI = [{
+        id: "new_image",
+        image_url: b64,
+        is_base64: true,
+        section: "user_added",
+        file_name: file.originalname
+      }];
+
+      // Context prompt
+      const masterPrompt = await getMasterPromptByVenue("blog_generation");
+
+      const imageMetadata = await generateImageMetadata({
+        images: imageInputForAI,
+        blogContext: blogData.blog_content, // Use correct field
+        aiProvider: process.env.GROQ_API_KEY ? "groq" : "claude",
+        apiKey: process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY,
+        anthropicClient: anthropic,
+        masterPrompt: masterPrompt,
+      });
+
+      const meta = imageMetadata[0] || {};
+
+      // 3. Insert into DB
+      const newImageRow = {
+        blog_id: blogId,
+        user_id: blogData.user_id,
+        image_url: publicUrl,
+        image_source: "user_upload",
+        section: "user_added",
+        file_name: meta.file_name || file.originalname,
+        title_tag: meta.title_tag || "",
+        alt_text: meta.alt_text || "",
+        is_latest: true,
+      };
+
+      const { data: insertedImage, error: insertError } = await supabase
+        .from("blog_images")
+        .insert(newImageRow)
+        .select()
+        .single();
+
+      if (insertError) {
+        throw insertError;
+      }
+
+      res.json({
+        success: true,
+        image: insertedImage
+      });
+
+    } catch (error) {
+      console.error("Error adding image:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+
 app.post("/api/refresh-image", async (req, res) => {
   try {
     const { blogId, section, customQuery } = req.body;

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import { supabase } from "./supabase";
+import { marked } from "marked";
 import { API_Base } from "./apiConfig";
 import Header from "./components/Header";
 import Login from "./components/Login";
 import History from "./components/History";
 import AuthGateModal from "./components/AuthGateModal";
+import ResetPassword from "./components/ResetPassword";
 
 function App() {
   const [formData, setFormData] = useState({
@@ -205,10 +207,52 @@ function App() {
       setImages(data.images || []);
     } catch (e) {
       setError(e.message);
-    } finally {
-      setRefreshingSection(null);
     }
-  }
+  };
+
+  const [isAddingImage, setIsAddingImage] = useState(false);
+
+  const handleAddImage = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!session) {
+      // If not logged in, we could gate this, but let's assume valid session for now or handle error
+      alert("Please login to add images.");
+      return;
+    }
+
+    try {
+      setIsAddingImage(true);
+      const headers = {};
+      if (session?.access_token) {
+        headers["Authorization"] = `Bearer ${session.access_token}`;
+      }
+
+      const body = new FormData();
+      body.append("blogId", blogId);
+      body.append("image", file);
+
+      const resp = await fetch(`${API_Base}/api/add-image`, {
+        method: "POST",
+        headers,
+        body
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Failed to add image");
+
+      // Append new image to list
+      setImages(prev => [...prev, data.image]);
+
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setIsAddingImage(false);
+      // Reset file input
+      e.target.value = null;
+    }
+  };
 
   const downloadDraft = () => {
     // If user is not logged in, show gate modal first
@@ -231,19 +275,19 @@ Venue Name: ${formData.venueName}
 Target Month: ${formData.targetMonth}
 Week of Month: ${formData.weekOfMonth}
 Creator: ${formData.creator}
-Draft Topic/Title: ${formData.draftTopic}
+Draft Topic / Title: ${formData.draftTopic}
 Generated: ${new Date().toLocaleString()}
 
 ---
 
-`;
+  `;
 
     const content = metadata + blogContent;
     const blob = new Blob([content], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${formData.venueName.replace(/\s+/g, "_")}_Draft.md`;
+    a.download = `${formData.venueName.replace(/\s+/g, "_")} _Draft.md`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -267,52 +311,65 @@ Generated: ${new Date().toLocaleString()}
     }
 
     // Build HTML Content
-    let htmlContent = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${formData.venueName} - Blog Draft</title>
-    <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; color: #333; }
-        h1 { color: #222; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        .metadata { background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 30px; font-size: 0.9em; color: #666; }
-        .content { white-space: pre-wrap; margin-bottom: 40px; }
-        .images-section { border-top: 2px solid #eee; padding-top: 20px; margin-top: 40px; }
-        .image-card { border: 1px solid #ddd; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
-        img { max-width: 100%; height: auto; border-radius: 4px; display: block; margin-bottom: 10px; }
-        .img-meta { font-size: 0.9em; color: #555; }
-        .img-meta strong { color: #333; }
-    </style>
-</head>
-<body>
-    <h1>${formData.venueName} - Blog Draft</h1>
-    
-    <div class="metadata">
-        <p><strong>Target Month:</strong> ${formData.targetMonth}</p>
-        <p><strong>Week of Month:</strong> ${formData.weekOfMonth}</p>
-        <p><strong>Creator:</strong> ${formData.creator}</p>
-        <p><strong>Draft Topic:</strong> ${formData.draftTopic}</p>
-        <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
-    </div>
+    const contentHtml = marked.parse(blogContent);
 
-    <div class="content">${blogContent}</div>
+    let htmlContent = `< !DOCTYPE html >
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${formData.venueName} - Blog Draft</title>
+          <style>
+            body {font - family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; color: #333; }
+            h1 {color: #222; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+            h2 {margin - top: 30px; color: #444; }
+            a {color: #007bff; text-decoration: none; }
+            a:hover {text - decoration: underline; }
+            strong {color: #000; }
+            .metadata {background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 30px; font-size: 0.9em; color: #666; }
+            .content {margin - bottom: 40px; }
+            .images-section {border - top: 2px solid #eee; padding-top: 20px; margin-top: 40px; }
+            .image-card {border: 1px solid #ddd; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
+            img {max - width: 100%; height: auto; border-radius: 4px; display: block; margin-bottom: 10px; }
+            .img-meta {font - size: 0.9em; color: #555; }
+            .img-meta strong {color: #333; }
+          </style>
+        </head>
+        <body>
+          <h1>${formData.venueName} - Blog Draft</h1>
 
-    <div class="images-section">
-        <h2>Generated Images + Metadata</h2>
-        ${images.map(img => `
+          <div class="metadata">
+            <p><strong>Target Month:</strong> ${formData.targetMonth}</p>
+            <p><strong>Week of Month:</strong> ${formData.weekOfMonth}</p>
+            <p><strong>Creator:</strong> ${formData.creator}</p>
+            <p><strong>Draft Topic:</strong> ${formData.draftTopic}</p>
+            <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+          </div>
+
+          <div class="content">${contentHtml}</div>
+
+          <div class="images-section">
+            <h2>Generated Images + Metadata</h2>
+            ${images
+        .map(
+          (img) => `
         <div class="image-card">
-            ${img.image_url ? `<img src="${img.image_url}" alt="${img.alt_text || ''}">` : '<p><em>No image source available</em></p>'}
+            ${img.image_url
+              ? `<img src="${img.image_url}" alt="${img.alt_text || ""}">`
+              : "<p><em>No image source available</em></p>"
+            }
             <div class="img-meta">
                 <div><strong>File Name:</strong> ${img.file_name}</div>
-                <div><strong>Title Tag:</strong> ${img.title_tag || 'N/A'}</div>
-                <div><strong>Alt Text:</strong> ${img.alt_text || 'N/A'}</div>
+                <div><strong>Title Tag:</strong> ${img.title_tag || "N/A"}</div>
+                <div><strong>Alt Text:</strong> ${img.alt_text || "N/A"}</div>
             </div>
         </div>
-        `).join('')}
-    </div>
-</body>
-</html>`;
+        `
+        )
+        .join("")}
+          </div>
+        </body>
+      </html>`;
 
     const blob = new Blob([htmlContent], { type: "text/html" });
     const url = URL.createObjectURL(blob);
@@ -324,6 +381,12 @@ Generated: ${new Date().toLocaleString()}
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  const isResetPage = window.location.pathname === "/reset-password";
+
+  if (isResetPage) {
+    return <ResetPassword />;
+  }
 
   return (
     <div className="app">
@@ -536,14 +599,45 @@ Generated: ${new Date().toLocaleString()}
                   <button onClick={downloadDraft} className="download-btn">
                     Download Draft (MD)
                   </button>
-                  <button onClick={downloadHtml} className="download-btn" style={{ marginLeft: '10px', background: '#007bff' }}>
+                  <button
+                    onClick={downloadHtml}
+                    className="download-btn"
+                    style={{ marginLeft: "10px", background: "#007bff" }}
+                  >
                     Download HTML
                   </button>
                 </div>
-                <div className="blog-content">{blogContent}</div>
+                <div
+                  className="blog-content"
+                  dangerouslySetInnerHTML={{
+                    __html: marked.parse(blogContent),
+                  }}
+                />
                 {images.length > 0 && (
                   <div className="image-preview">
-                    <h3>Generated Images + Metadata</h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3>Generated Images + Metadata</h3>
+                      <label className="add-image-btn" style={{
+                        cursor: 'pointer',
+                        background: '#28a745',
+                        color: 'white',
+                        padding: '8px 12px',
+                        borderRadius: '4px',
+                        fontSize: '0.9em',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}>
+                        {isAddingImage ? 'Uploading...' : 'Add Image +'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={handleAddImage}
+                          disabled={isAddingImage}
+                        />
+                      </label>
+                    </div>
 
                     {images.map((img) => (
                       <div
@@ -614,6 +708,7 @@ Generated: ${new Date().toLocaleString()}
       </div>
     </div>
   );
+
 }
 
 export default App;

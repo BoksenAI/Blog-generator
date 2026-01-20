@@ -823,76 +823,28 @@ app.post("/api/refresh-image", async (req, res) => {
 
     // F) Generate metadata for ONLY this new image
     // IMPORTANT: use the same master prompt key you already use in /api/generate-blog for metadata
-    const imageMetadataMasterPrompt = await getMasterPromptByVenue(
-      "image_metadata"
-    );
+    // F) Generate metadata using shared service with vision support
+    const masterPrompt = await getMasterPromptByVenue("blog_generation");
 
-    const metadataPrompt = `
-${imageMetadataMasterPrompt}
+    const imageInputForAI = [{
+      id: "refreshed_image",
+      image_url: inserted.image_url,
+      is_base64: false,
+      is_remote_url: true, // Signal that this is a public URL for vision
+      section: inserted.section,
+      file_name: `pexels_${Date.now()}.jpg`
+    }];
 
-Blog context:
-- Venue: ${blog.venue_name}
-- Draft topic: ${blog.draft_topic}
-${blog.special_instructions
-        ? `- Special instructions: ${blog.special_instructions}`
-        : ""
-      }
+    const imageMetadata = await generateImageMetadata({
+      images: imageInputForAI,
+      blogContext: blog.venue_name + " " + blog.draft_topic,
+      aiProvider: process.env.GROQ_API_KEY ? "groq" : "claude",
+      apiKey: process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY,
+      anthropicClient: anthropic,
+      masterPrompt: masterPrompt,
+    });
 
-Generate metadata for this ONE image:
-image_url: ${inserted.image_url}
-section: ${inserted.section}
-
-Return ONLY a JSON object with keys:
-file_name, title_tag, alt_text
-`.trim();
-
-    let metaText = "";
-
-    // Use your existing provider preference (same style as your generate endpoint)
-    if (process.env.GROQ_API_KEY) {
-      const resp = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "llama-3.1-8b-instant",
-            messages: [{ role: "user", content: metadataPrompt }],
-            temperature: 0.3,
-            max_tokens: 700,
-          }),
-        }
-      );
-
-      if (!resp.ok) {
-        const err = await resp.text();
-        console.error("Groq metadata error:", err);
-        return res
-          .status(500)
-          .json({ error: "Metadata generation failed (Groq)" });
-      }
-
-      const json = await resp.json();
-      metaText = json?.choices?.[0]?.message?.content || "";
-    } else if (genAI) {
-      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-      const result = await model.generateContent(metadataPrompt);
-      metaText = result.response.text();
-    } else {
-      return res
-        .status(500)
-        .json({ error: "No AI provider configured for metadata" });
-    }
-
-    const meta = extractFirstJsonObject(metaText);
-
-    if (!meta) {
-      console.error("Metadata JSON parse failed. Raw output:", metaText);
-      return res.status(500).json({ error: "Failed to parse metadata JSON" });
-    }
+    const meta = imageMetadata[0] || {};
 
     // G) Update the inserted image row with metadata
     const { error: updateError } = await supabase
@@ -1020,6 +972,57 @@ app.delete("/api/blogs/:id", requireAuth, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+// Publish a blog
+app.post("/api/publish-blog", requireAuth, async (req, res) => {
+  const { blogId } = req.body;
+  if (!blogId) return res.status(400).json({ error: "Missing blogId" });
+
+  try {
+    // 1. Verify ownership
+    const { data: blog, error: fetchError } = await supabase
+      .from("blogs")
+      .select("user_id")
+      .eq("id", blogId)
+      .single();
+
+    if (fetchError || !blog) return res.status(404).json({ error: "Blog not found" });
+    if (blog.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
+
+    // 2. Update status
+    const { error: updateError } = await supabase
+      .from("blogs")
+      .update({ status: "published" })
+      .eq("id", blogId);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Publish error:", err);
+    res.status(500).json({ error: "Failed to publish" });
+  }
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ error: "File too large. Max size is 5MB." });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: err.message || "Internal Server Error" });
+});
+
+ensureBucketExists().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}).catch(err => {
+  console.error("Failed to check/create bucket:", err);
+  // Still start server but warn
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT} (Bucket check failed)`);
+  });
 });

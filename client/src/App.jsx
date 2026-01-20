@@ -254,6 +254,31 @@ function App() {
     }
   };
 
+  const [publishStatus, setPublishStatus] = useState("idle"); // idle, publishing, published
+
+  const handlePublish = async () => {
+    if (!blogId) return;
+    try {
+      setPublishStatus("publishing");
+      const headers = { "Content-Type": "application/json" };
+      if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+
+      const res = await fetch(`${API_Base}/api/publish-blog`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ blogId })
+      });
+
+      if (!res.ok) throw new Error("Failed to publish");
+
+      setPublishStatus("published");
+      alert("Blog published successfully! It is now ready for the website to fetch.");
+    } catch (e) {
+      alert(e.message);
+      setPublishStatus("idle");
+    }
+  };
+
   const downloadDraft = () => {
     // If user is not logged in, show gate modal first
     if (!session) {
@@ -605,6 +630,19 @@ Generated: ${new Date().toLocaleString()}
                     style={{ marginLeft: "10px", background: "#007bff" }}
                   >
                     Download HTML
+                  </button>
+                  <button
+                    onClick={handlePublish}
+                    disabled={publishStatus === "publishing" || publishStatus === "published"}
+                    className="download-btn"
+                    style={{
+                      marginLeft: "10px",
+                      background: publishStatus === "published" ? "#6c757d" : "#6f42c1",
+                      cursor: publishStatus === "published" ? "default" : "pointer"
+                    }}
+                  >
+                    {publishStatus === "publishing" ? "Publishing..." :
+                      publishStatus === "published" ? "Published ✓" : "Publish"}
                   </button>
                 </div>
                 <div

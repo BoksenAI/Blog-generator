@@ -1003,6 +1003,35 @@ app.post("/api/publish-blog", requireAuth, async (req, res) => {
   }
 });
 
+// Unpublish a blog (revert to draft)
+app.post("/api/unpublish-blog", requireAuth, async (req, res) => {
+  const { blogId } = req.body;
+  if (!blogId) return res.status(400).json({ error: "Missing blogId" });
+
+  try {
+    const { data: blog, error: fetchError } = await supabase
+      .from("blogs")
+      .select("user_id")
+      .eq("id", blogId)
+      .single();
+
+    if (fetchError || !blog) return res.status(404).json({ error: "Blog not found" });
+    if (blog.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
+
+    const { error: updateError } = await supabase
+      .from("blogs")
+      .update({ status: "draft" })
+      .eq("id", blogId);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Unpublish error:", err);
+    res.status(500).json({ error: "Failed to unpublish" });
+  }
+});
+
 // Global error handler
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {

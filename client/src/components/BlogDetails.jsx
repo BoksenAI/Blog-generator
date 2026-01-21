@@ -107,7 +107,7 @@ const BlogDetails = ({ blogId, onBack, session }) => {
       // The session generic prop might be missing in some legacy calls if not careful,
       // but we added it.
       // Better to use session directly.
-    } catch (e) {}
+    } catch (e) { }
   };
 
   // Correct implementation of actions
@@ -143,6 +143,27 @@ const BlogDetails = ({ blogId, onBack, session }) => {
 
       setBlog({ ...blog, ...editForm });
       setIsEditing(false);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleUnpublish = async () => {
+    if (!confirm("Are you sure you want to unpublish this blog? It will disappear from the website.")) return;
+    try {
+      const res = await fetch(`${API_Base}/api/unpublish-blog`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ blogId }),
+      });
+
+      if (!res.ok) throw new Error("Failed to unpublish");
+
+      setBlog({ ...blog, status: "draft" });
+      alert("Blog unpublished. It is back to draft status.");
     } catch (err) {
       alert(err.message);
     }
@@ -202,6 +223,11 @@ const BlogDetails = ({ blogId, onBack, session }) => {
               <button onClick={() => setIsEditing(true)} className="edit-btn">
                 Edit
               </button>
+              {blog.status === "published" && (
+                <button onClick={handleUnpublish} className="unpublish-btn" style={{ background: "#ffc107", color: "#000", marginRight: "10px", padding: "8px 16px", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "1rem" }}>
+                  Unpublish
+                </button>
+              )}
               <button onClick={performDelete} className="delete-btn">
                 Delete
               </button>

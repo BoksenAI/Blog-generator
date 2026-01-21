@@ -207,6 +207,8 @@ function App() {
       setImages(data.images || []);
     } catch (e) {
       setError(e.message);
+    } finally {
+      setRefreshingSection(null);
     }
   };
 
@@ -251,6 +253,36 @@ function App() {
       setIsAddingImage(false);
       // Reset file input
       e.target.value = null;
+    }
+  };
+
+  const [publishStatus, setPublishStatus] = useState("idle"); // idle, publishing, published
+
+  const handlePublish = async () => {
+    if (!blogId) return;
+
+    if (!window.confirm("Are you sure you want to publish? (this blog will be published on the venue's website)")) {
+      return;
+    }
+
+    try {
+      setPublishStatus("publishing");
+      const headers = { "Content-Type": "application/json" };
+      if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+
+      const res = await fetch(`${API_Base}/api/publish-blog`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ blogId })
+      });
+
+      if (!res.ok) throw new Error("Failed to publish");
+
+      setPublishStatus("published");
+      alert("Blog published successfully! It is now ready for the website to fetch.");
+    } catch (e) {
+      alert(e.message);
+      setPublishStatus("idle");
     }
   };
 
@@ -606,6 +638,21 @@ Generated: ${new Date().toLocaleString()}
                   >
                     Download HTML
                   </button>
+                  {session && (
+                    <button
+                      onClick={handlePublish}
+                      disabled={publishStatus === "publishing" || publishStatus === "published"}
+                      className="download-btn"
+                      style={{
+                        marginLeft: "10px",
+                        background: publishStatus === "published" ? "#6c757d" : "#6f42c1",
+                        cursor: publishStatus === "published" ? "default" : "pointer"
+                      }}
+                    >
+                      {publishStatus === "publishing" ? "Publishing..." :
+                        publishStatus === "published" ? "Published ✓" : "Publish"}
+                    </button>
+                  )}
                 </div>
                 <div
                   className="blog-content"
@@ -706,7 +753,7 @@ Generated: ${new Date().toLocaleString()}
           </>
         )}
       </div>
-    </div>
+    </div >
   );
 
 }

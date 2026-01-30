@@ -8,6 +8,8 @@ import { supabase } from "./supabaseClient.js";
 import { generateImageMetadata } from "./services/imageMetadataService.js";
 import { authMiddleware, requireAuth } from "./middleware/auth.js";
 import multer from "multer";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { runGeminiFactCheck } from "./services/geminiService.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -15,6 +17,9 @@ const upload = multer({
 });
 
 dotenv.config();
+
+console.log("PEXELS key loaded?", Boolean(process.env.PEXELS_API_KEY));
+console.log("PEXELS key prefix:", process.env.PEXELS_API_KEY?.slice(0, 6));
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -81,14 +86,22 @@ const anthropic = process.env.ANTHROPIC_API_KEY
 // Helper to ensure storage bucket exists
 async function ensureBucketExists() {
   try {
-    const output = await supabase.storage.getBucket('blog-images');
-    if (output.error && output.error.message.includes('not found')) {
+    const output = await supabase.storage.getBucket("blog-images");
+    if (output.error && output.error.message.includes("not found")) {
       console.log("Bucket 'blog-images' not found. Creating...");
-      const { data, error } = await supabase.storage.createBucket('blog-images', {
-        public: true,
-        fileSizeLimit: 10485760, // 10MB
-        allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
-      });
+      const { data, error } = await supabase.storage.createBucket(
+        "blog-images",
+        {
+          public: true,
+          fileSizeLimit: 10485760, // 10MB
+          allowedMimeTypes: [
+            "image/png",
+            "image/jpeg",
+            "image/gif",
+            "image/webp",
+          ],
+        },
+      );
       if (error) {
         console.error("Failed to create bucket:", error);
       } else {
@@ -110,7 +123,7 @@ app.get("/api/list-models", async (req, res) => {
   try {
     // Try using the REST API directly to list models
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`,
     );
     const data = await response.json();
 
@@ -119,7 +132,7 @@ app.get("/api/list-models", async (req, res) => {
         .filter(
           (m) =>
             m.supportedGenerationMethods &&
-            m.supportedGenerationMethods.includes("generateContent")
+            m.supportedGenerationMethods.includes("generateContent"),
         )
         .map((m) => ({
           name: m.name,
@@ -160,10 +173,25 @@ function buildPexelsQuery({ venueName, draftTopic, specialInstructions }) {
   return query.slice(0, 120);
 }
 
+app.get("/test-gemini", async (req, res) => {
+  try {
+    const result = await runGeminiFactCheck(
+      "Give me factual, verified information about Cedros restaurant in Tokyo.",
+    );
+    res.json({ result });
+  } catch (err) {
+    console.error("Gemini test error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Blog generation endpoint
 app.post(
   "/api/generate-blog",
-  upload.fields([{ name: "heroImage", maxCount: 1 }, { name: "galleryImages", maxCount: 10 }]),
+  upload.fields([
+    { name: "heroImage", maxCount: 1 },
+    { name: "galleryImages", maxCount: 10 },
+  ]),
   async (req, res) => {
     try {
       const {
@@ -225,28 +253,36 @@ app.post(
           public_url: publicUrl, // STORE this in DB for persistence
           file_name: heroImageName,
           section: "hero",
-          is_user_upload: true
+          is_user_upload: true,
         });
       }
 
       if (req.files["galleryImages"]) {
         // Use Promise.all for parallel uploads
-        await Promise.all(req.files["galleryImages"].map(async (file, index) => {
-          const b64 = fileToBase64(file);
-          const publicUrl = await uploadToSupabase(file);
+        await Promise.all(
+          req.files["galleryImages"].map(async (file, index) => {
+            const b64 = fileToBase64(file);
+            const publicUrl = await uploadToSupabase(file);
 
-          galleryImageNames.push(file.originalname);
-          uploadedImagesData.push({
-            image_url: b64,
-            public_url: publicUrl,
-            file_name: file.originalname,
-            section: `gallery_${index}`,
-            is_user_upload: true
-          });
-        }));
+            galleryImageNames.push(file.originalname);
+            uploadedImagesData.push({
+              image_url: b64,
+              public_url: publicUrl,
+              file_name: file.originalname,
+              section: `gallery_${index}`,
+              is_user_upload: true,
+            });
+          }),
+        );
       }
 
-      if (!venueName || !targetMonth || !weekOfMonth || !creator || !draftTopic) {
+      if (
+        !venueName ||
+        !targetMonth ||
+        !weekOfMonth ||
+        !creator ||
+        !draftTopic
+      ) {
         return res.status(400).json({ error: "Missing required fields" });
       }
       //Master Prompt↓
@@ -273,24 +309,79 @@ app.post(
       }*/
       // 2. If no specific prompt, fall back to the default master prompt
       if (!masterPrompt) {
-        console.log(`No specific prompt found for ${venueName}, using default.`);
+        console.log(
+          `No specific prompt found for ${venueName}, using default.`,
+        );
         masterPrompt = await getMasterPromptByVenue("blog_generation");
       }
+
+      // --------------------
+      // Gemini Fact Check (pre-step)
+      // --------------------
+      let factCheckBlock = "";
+
+      console.log("[Gemini] Starting fact-check step");
+      console.log("[Gemini] Venue:", venueName);
+
+      try {
+        // Keep this short. The goal is verified facts only, not long prose.
+        const factPrompt = `
+Verify factual details for: ${venueName} (Tokyo).
+Return a compact bullet list with only verified facts and sources hints.
+
+Include:
+- Official name + address + neighborhood
+- Official website URL (if known)
+- Opening hours
+- Reservation method (e.g., TableCheck) if verified
+- 3-5 nearby relevant places (stations/landmarks) if verified
+- Any constraints we must follow (for example: "menu changes seasonally") only if verified
+
+Rules:
+- If you are not sure, write "Unknown".
+- Do not write a blog.
+- Do not add marketing language.
+- Keep it under ~180-250 words.
+  `.trim();
+
+        console.log("[Gemini] Prompt length:", factPrompt.length);
+
+        const factResult = await runGeminiFactCheck(factPrompt);
+
+        console.log(
+          "[Gemini] Success. Output length:",
+          factResult?.length || 0,
+        );
+
+        console.log("[Gemini] Output preview:", factResult?.slice(0, 300));
+
+        if (factResult && factResult.trim().length > 0) {
+          factCheckBlock = `\n\nVERIFIED FACTS (use these, do not invent):\n${factResult}\n\n`;
+        }
+      } catch (e) {
+        console.error("[Gemini] Fact-check failed");
+        console.error("[Gemini] Error message:", e.message);
+      }
+
       //Master Prompt+user inputs↓
       const prompt = `
   ${masterPrompt} 
+
+  ${factCheckBlock}
+
   Venue Name: ${venueName}
   Target Month: ${targetMonth}
   Week of Month: ${weekOfMonth}
   Creator: ${creator}
   Draft Topic: ${draftTopic}
-  ${venueWebsite
-          ? `Venue Website: ${venueWebsite}
+  ${
+    venueWebsite
+      ? `Venue Website: ${venueWebsite}
   MANDATORY REQUIREMENT: 
   1. You MUST include a Markdown hyperlink to the venue website at the end of the blog. Format: [${venueName}](${venueWebsite}).
   2. FOCUS ONLY on ${venueName}. Do NOT list or mention other venues. Do NOT create a 'Resources' section with other links.`
-          : ""
-        }
+      : ""
+  }
   ${specialInstructions ? `Special Instructions: ${specialInstructions}` : ""}
   `;
 
@@ -320,7 +411,7 @@ app.post(
                 temperature: 0.7,
                 max_tokens: 2048, // Reduced from 4096 as some models have lower limits
               }),
-            }
+            },
           );
           //Checks for the status response from groq and return the model name and error message
           if (!groqResponse.ok) {
@@ -330,8 +421,8 @@ app.post(
             console.error("Groq API error details:", errorData);
             throw new Error(
               `Groq API error: ${groqResponse.status} - ${JSON.stringify(
-                errorData
-              )}`
+                errorData,
+              )}`,
             );
           }
 
@@ -347,7 +438,7 @@ app.post(
           blogContent = msg.content[0].text;
         } else {
           throw new Error(
-            "No AI provider configured. Please set GROQ_API_KEY or ANTHROPIC_API_KEY"
+            "No AI provider configured. Please set GROQ_API_KEY or ANTHROPIC_API_KEY",
           );
         }
       } catch (providerError) {
@@ -355,7 +446,7 @@ app.post(
         if (aiProvider !== "claude" && anthropic) {
           console.log(
             "Primary provider failed, trying Claude fallback...",
-            providerError.message
+            providerError.message,
           );
           try {
             const msg = await anthropic.messages.create({
@@ -408,7 +499,7 @@ app.post(
       // STEP C: Store ALL images in blog_images
       if (!images || images.length === 0) {
         console.log(
-          "No images returned from Pexels, skipping blog_images insert"
+          "No images returned from Pexels, skipping blog_images insert",
         );
       } else {
         const rowsToInsert = images.map((img, index) => ({
@@ -420,7 +511,11 @@ app.post(
           image_source: "pexels",
           // If user provided a hero image, Pexels images should NOT be hero.
           // They will be "pexels_gallery_N".
-          section: heroImageName ? `pexels_gallery_${index}` : (index === 0 ? "hero" : `gallery_${index}`),
+          section: heroImageName
+            ? `pexels_gallery_${index}`
+            : index === 0
+              ? "hero"
+              : `gallery_${index}`,
           is_latest: true,
           is_latest: true,
         }));
@@ -439,7 +534,7 @@ app.post(
       // STEP C-2: Store User Provided HERO Image
       if (heroImageName) {
         // Find the upload data
-        const heroData = uploadedImagesData.find(u => u.section === "hero");
+        const heroData = uploadedImagesData.find((u) => u.section === "hero");
 
         const heroRow = {
           blog_id: blog.id,
@@ -455,7 +550,8 @@ app.post(
           .from("blog_images")
           .insert(heroRow);
 
-        if (insertHeroError) console.error("Error inserting user hero image:", insertHeroError);
+        if (insertHeroError)
+          console.error("Error inserting user hero image:", insertHeroError);
         else console.log("Inserted user hero image");
       }
 
@@ -464,7 +560,9 @@ app.post(
         const userGalleryRows = [];
 
         galleryImageNames.forEach((name, index) => {
-          const gData = uploadedImagesData.find(u => u.section === `gallery_${index}`);
+          const gData = uploadedImagesData.find(
+            (u) => u.section === `gallery_${index}`,
+          );
           userGalleryRows.push({
             blog_id: blog.id,
             user_id: blog.user_id,
@@ -481,7 +579,10 @@ app.post(
           .insert(userGalleryRows);
 
         if (insertGalleryError) {
-          console.error("Error inserting user gallery images:", insertGalleryError);
+          console.error(
+            "Error inserting user gallery images:",
+            insertGalleryError,
+          );
         } else {
           console.log("Inserted user gallery images:", userGalleryRows.length);
         }
@@ -499,49 +600,56 @@ app.post(
       }
 
       // 2. Get image metadata master prompt
-      const imageMetadataPrompt = await getMasterPromptByVenue("image_metadata");
+      const imageMetadataPrompt =
+        await getMasterPromptByVenue("image_metadata");
 
       // 3. Generate metadata using AI
       // Merge uploaded base64 data into blogImages for Vision analysis
       // AND fetch Pexels images to convert to base64 so Vision can see them too
-      const imagesForAI = await Promise.all(blogImages.map(async (img) => {
-        // 1. Check if we already have a user upload for this section
-        const uploadData = uploadedImagesData.find(u => u.section === img.section);
-        if (uploadData) {
+      const imagesForAI = await Promise.all(
+        blogImages.map(async (img) => {
+          // 1. Check if we already have a user upload for this section
+          const uploadData = uploadedImagesData.find(
+            (u) => u.section === img.section,
+          );
+          if (uploadData) {
+            return {
+              ...img,
+              image_url: uploadData.image_url,
+              is_base64: true,
+            };
+          }
+
+          // 2. If it's a Pexels image (starts with http), fetch it to get Base64
+          if (img.image_url && img.image_url.startsWith("http")) {
+            try {
+              console.log(
+                `Fetching Pexels image for Vision analysis: ${img.image_url}`,
+              );
+              const imgResp = await fetch(img.image_url);
+              if (imgResp.ok) {
+                const arrayBuffer = await imgResp.arrayBuffer();
+                const buffer = Buffer.from(arrayBuffer);
+                const b64 = buffer.toString("base64");
+                // Guess mime type or default to jpeg (Pexels usually serves jpegs)
+                return {
+                  ...img,
+                  image_url: `data:image/jpeg;base64,${b64}`,
+                  is_base64: true, //transits image into 64 binary encoding system
+                };
+              }
+            } catch (err) {
+              console.error("Failed to fetch Pexels image for vision:", err);
+            }
+          }
+
+          // Fallback: just return original (will be treated as text-only analysis)
           return {
             ...img,
-            image_url: uploadData.image_url,
-            is_base64: true
+            is_base64: false,
           };
-        }
-
-        // 2. If it's a Pexels image (starts with http), fetch it to get Base64
-        if (img.image_url && img.image_url.startsWith("http")) {
-          try {
-            console.log(`Fetching Pexels image for Vision analysis: ${img.image_url}`);
-            const imgResp = await fetch(img.image_url);
-            if (imgResp.ok) {
-              const arrayBuffer = await imgResp.arrayBuffer();
-              const buffer = Buffer.from(arrayBuffer);
-              const b64 = buffer.toString("base64");
-              // Guess mime type or default to jpeg (Pexels usually serves jpegs)
-              return {
-                ...img,
-                image_url: `data:image/jpeg;base64,${b64}`,
-                is_base64: true //transits image into 64 binary encoding system
-              };
-            }
-          } catch (err) {
-            console.error("Failed to fetch Pexels image for vision:", err);
-          }
-        }
-
-        // Fallback: just return original (will be treated as text-only analysis)
-        return {
-          ...img,
-          is_base64: false
-        };
-      }));
+        }),
+      );
 
       const imageMetadata = await generateImageMetadata({
         images: imagesForAI,
@@ -552,22 +660,21 @@ app.post(
         masterPrompt: imageMetadataPrompt,
       });
 
-
       // 4. Save metadata back to Supabase
       for (const meta of imageMetadata) {
         // We match by original image_url (which for user uploads was the filename)
         // OR by section if available in metadata (safest if we pass it through)
 
         // Note: generateImageMetadata returns items with 'image_url' property from input.
-        // For uploads, we passed base64 as image_url in imagesForAI, 
-        // BUT the service (which I will update) should preserve the *original* identity 
+        // For uploads, we passed base64 as image_url in imagesForAI,
+        // BUT the service (which I will update) should preserve the *original* identity
         // or we need to map back.
 
         // Actually, easiest is to trust the index/array order if service preserves it.
         // But let's look at how we update.
         // The previous code matched by `eq("image_url", meta.image_url)`.
 
-        // If I pass base64 as image_url, meta.image_url will be base64. 
+        // If I pass base64 as image_url, meta.image_url will be base64.
         // That won't match the DB content (filename).
 
         // Fix: In imagesForAI above, I kept `img` properties but OVERWROTE `image_url`.
@@ -593,7 +700,7 @@ app.post(
       const { data: finalImages, error: finalImagesError } = await supabase
         .from("blog_images")
         .select(
-          "image_url, file_name, title_tag, alt_text, section, is_latest, created_at"
+          "image_url, file_name, title_tag, alt_text, section, is_latest, created_at",
         )
         .eq("blog_id", blog.id)
         .eq("is_latest", true)
@@ -602,8 +709,10 @@ app.post(
       if (finalImagesError) throw finalImagesError;
 
       // Merge base64 back into response so frontend can display them!
-      const imagesWithPreview = finalImages.map(img => {
-        const uploadData = uploadedImagesData.find(u => u.section === img.section);
+      const imagesWithPreview = finalImages.map((img) => {
+        const uploadData = uploadedImagesData.find(
+          (u) => u.section === img.section,
+        );
         if (uploadData) {
           return { ...img, image_url: uploadData.image_url }; // Return base64 for display
         }
@@ -621,116 +730,110 @@ app.post(
       console.error("Error generating blog:", error);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
-
-
 // Endpoint to add a new user image to an existing blog
-app.post(
-  "/api/add-image",
-  upload.single("image"),
-  async (req, res) => {
-    try {
-      const { blogId } = req.body;
-      const file = req.file;
+app.post("/api/add-image", upload.single("image"), async (req, res) => {
+  try {
+    const { blogId } = req.body;
+    const file = req.file;
 
-      if (!blogId || !file) {
-        return res.status(400).json({ error: "Missing blogId or image file" });
-      }
+    if (!blogId || !file) {
+      return res.status(400).json({ error: "Missing blogId or image file" });
+    }
 
-      // 1. Upload to Supabase Storage
-      const timestamp = Date.now();
-      const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
-      const path = `uploads/${timestamp}_${safeName}`;
+    // 1. Upload to Supabase Storage
+    const timestamp = Date.now();
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const path = `uploads/${timestamp}_${safeName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from("blog-images")
-        .upload(path, file.buffer, {
-          contentType: file.mimetype,
-          upsert: false,
-        });
+    const { error: uploadError } = await supabase.storage
+      .from("blog-images")
+      .upload(path, file.buffer, {
+        contentType: file.mimetype,
+        upsert: false,
+      });
 
-      if (uploadError) {
-        throw new Error(`Storage upload failed: ${uploadError.message}`);
-      }
+    if (uploadError) {
+      throw new Error(`Storage upload failed: ${uploadError.message}`);
+    }
 
-      const { data: publicData } = supabase.storage
-        .from("blog-images")
-        .getPublicUrl(path);
+    const { data: publicData } = supabase.storage
+      .from("blog-images")
+      .getPublicUrl(path);
 
-      const publicUrl = publicData.publicUrl;
+    const publicUrl = publicData.publicUrl;
 
-      // 2. Generate Metadata
-      const { data: blogData, error: blogError } = await supabase
-        .from("blogs")
-        .select("blog_content, user_id")
-        .eq("id", blogId)
-        .single();
+    // 2. Generate Metadata
+    const { data: blogData, error: blogError } = await supabase
+      .from("blogs")
+      .select("blog_content, user_id")
+      .eq("id", blogId)
+      .single();
 
-      if (blogError || !blogData) {
-        throw new Error("Blog not found");
-      }
+    if (blogError || !blogData) {
+      throw new Error("Blog not found");
+    }
 
-      const b64 = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+    const b64 = `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
 
-      const imageInputForAI = [{
+    const imageInputForAI = [
+      {
         id: "new_image",
         image_url: b64,
         is_base64: true,
         section: "user_added",
-        file_name: file.originalname
-      }];
+        file_name: file.originalname,
+      },
+    ];
 
-      // Context prompt
-      const masterPrompt = await getMasterPromptByVenue("blog_generation");
+    // Context prompt
+    const masterPrompt = await getMasterPromptByVenue("blog_generation");
 
-      const imageMetadata = await generateImageMetadata({
-        images: imageInputForAI,
-        blogContext: blogData.blog_content, // Use correct field
-        aiProvider: process.env.GROQ_API_KEY ? "groq" : "claude",
-        apiKey: process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY,
-        anthropicClient: anthropic,
-        masterPrompt: masterPrompt,
-      });
+    const imageMetadata = await generateImageMetadata({
+      images: imageInputForAI,
+      blogContext: blogData.blog_content, // Use correct field
+      aiProvider: process.env.GROQ_API_KEY ? "groq" : "claude",
+      apiKey: process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY,
+      anthropicClient: anthropic,
+      masterPrompt: masterPrompt,
+    });
 
-      const meta = imageMetadata[0] || {};
+    const meta = imageMetadata[0] || {};
 
-      // 3. Insert into DB
-      const newImageRow = {
-        blog_id: blogId,
-        user_id: blogData.user_id,
-        image_url: publicUrl,
-        image_source: "user_upload",
-        section: "user_added",
-        file_name: meta.file_name || file.originalname,
-        title_tag: meta.title_tag || "",
-        alt_text: meta.alt_text || "",
-        is_latest: true,
-      };
+    // 3. Insert into DB
+    const newImageRow = {
+      blog_id: blogId,
+      user_id: blogData.user_id,
+      image_url: publicUrl,
+      image_source: "user_upload",
+      section: "user_added",
+      file_name: meta.file_name || file.originalname,
+      title_tag: meta.title_tag || "",
+      alt_text: meta.alt_text || "",
+      is_latest: true,
+    };
 
-      const { data: insertedImage, error: insertError } = await supabase
-        .from("blog_images")
-        .insert(newImageRow)
-        .select()
-        .single();
+    const { data: insertedImage, error: insertError } = await supabase
+      .from("blog_images")
+      .insert(newImageRow)
+      .select()
+      .single();
 
-      if (insertError) {
-        throw insertError;
-      }
-
-      res.json({
-        success: true,
-        image: insertedImage
-      });
-
-    } catch (error) {
-      console.error("Error adding image:", error);
-      res.status(500).json({ error: error.message });
+    if (insertError) {
+      throw insertError;
     }
-  }
-);
 
+    res.json({
+      success: true,
+      image: insertedImage,
+    });
+  } catch (error) {
+    console.error("Error adding image:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 app.post("/api/refresh-image", async (req, res) => {
   try {
@@ -764,7 +867,7 @@ app.post("/api/refresh-image", async (req, res) => {
     }
 
     const usedUrls = new Set(
-      (allImages || []).map((r) => r.image_url).filter(Boolean)
+      (allImages || []).map((r) => r.image_url).filter(Boolean),
     );
 
     // C) Mark current latest image(s) for THIS section as not latest
@@ -785,14 +888,14 @@ app.post("/api/refresh-image", async (req, res) => {
     const pexelsQuery = customQuery
       ? customQuery
       : buildPexelsQuery({
-        venueName: blog.venue_name,
-        draftTopic: blog.draft_topic,
-        specialInstructions: blog.special_instructions,
-      });
+          venueName: blog.venue_name,
+          draftTopic: blog.draft_topic,
+          specialInstructions: blog.special_instructions,
+        });
 
     const candidates = await fetchPexelsImages(pexelsQuery, 8); // fetch several to reduce duplicates
     const picked = (candidates || []).find(
-      (img) => img?.image_url && !usedUrls.has(img.image_url)
+      (img) => img?.image_url && !usedUrls.has(img.image_url),
     );
 
     // fallback: if everything is used, pick the first candidate (rare)
@@ -826,14 +929,16 @@ app.post("/api/refresh-image", async (req, res) => {
     // F) Generate metadata using shared service with vision support
     const masterPrompt = await getMasterPromptByVenue("blog_generation");
 
-    const imageInputForAI = [{
-      id: "refreshed_image",
-      image_url: inserted.image_url,
-      is_base64: false,
-      is_remote_url: true, // Signal that this is a public URL for vision
-      section: inserted.section,
-      file_name: `pexels_${Date.now()}.jpg`
-    }];
+    const imageInputForAI = [
+      {
+        id: "refreshed_image",
+        image_url: inserted.image_url,
+        is_base64: false,
+        is_remote_url: true, // Signal that this is a public URL for vision
+        section: inserted.section,
+        file_name: `pexels_${Date.now()}.jpg`,
+      },
+    ];
 
     const imageMetadata = await generateImageMetadata({
       images: imageInputForAI,
@@ -866,7 +971,7 @@ app.post("/api/refresh-image", async (req, res) => {
     const { data: latestImages, error: latestError } = await supabase
       .from("blog_images")
       .select(
-        "id, image_url, image_source, section, file_name, title_tag, alt_text, is_latest, created_at, metadata_generated_at"
+        "id, image_url, image_source, section, file_name, title_tag, alt_text, is_latest, created_at, metadata_generated_at",
       )
       .eq("blog_id", blogId)
       .eq("is_latest", true)
@@ -985,8 +1090,10 @@ app.post("/api/publish-blog", requireAuth, async (req, res) => {
       .eq("id", blogId)
       .single();
 
-    if (fetchError || !blog) return res.status(404).json({ error: "Blog not found" });
-    if (blog.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
+    if (fetchError || !blog)
+      return res.status(404).json({ error: "Blog not found" });
+    if (blog.user_id !== req.user.id)
+      return res.status(403).json({ error: "Unauthorized" });
 
     // 2. Update status
     const { error: updateError } = await supabase
@@ -1015,8 +1122,10 @@ app.post("/api/unpublish-blog", requireAuth, async (req, res) => {
       .eq("id", blogId)
       .single();
 
-    if (fetchError || !blog) return res.status(404).json({ error: "Blog not found" });
-    if (blog.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
+    if (fetchError || !blog)
+      return res.status(404).json({ error: "Blog not found" });
+    if (blog.user_id !== req.user.id)
+      return res.status(403).json({ error: "Unauthorized" });
 
     const { error: updateError } = await supabase
       .from("blogs")
@@ -1036,7 +1145,9 @@ app.post("/api/unpublish-blog", requireAuth, async (req, res) => {
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({ error: "File too large. Max size is 5MB." });
+      return res
+        .status(400)
+        .json({ error: "File too large. Max size is 5MB." });
     }
     return res.status(400).json({ error: err.message });
   }
@@ -1044,14 +1155,18 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || "Internal Server Error" });
 });
 
-ensureBucketExists().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+ensureBucketExists()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("Failed to check/create bucket:", err);
+    // Still start server but warn
+    app.listen(PORT, () => {
+      console.log(
+        `Server running on http://localhost:${PORT} (Bucket check failed)`,
+      );
+    });
   });
-}).catch(err => {
-  console.error("Failed to check/create bucket:", err);
-  // Still start server but warn
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT} (Bucket check failed)`);
-  });
-});

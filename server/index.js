@@ -173,6 +173,7 @@ function buildPexelsQuery({ venueName, draftTopic, specialInstructions }) {
   return query.slice(0, 120);
 }
 
+/*
 app.get("/test-gemini", async (req, res) => {
   try {
     const result = await runGeminiFactCheck(
@@ -184,6 +185,7 @@ app.get("/test-gemini", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+ */
 
 // Blog generation endpoint
 app.post(

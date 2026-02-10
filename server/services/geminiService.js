@@ -1,5 +1,5 @@
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = "gemini-2.5-flash-lite";
+const GEMINI_MODEL = "gemini-3-flash-preview";
 
 async function fetchWithRetry(url, options, maxRetries = 3) {
   let delay = 1000; // Start with 1 second delay

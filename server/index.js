@@ -321,6 +321,7 @@ app.post(
       // Gemini Fact Check (pre-step)
       // --------------------
       let factCheckBlock = "";
+      let factCheckText = "";
 
       console.log("[Gemini] Starting fact-check step");
       console.log("[Gemini] Venue:", venueName);
@@ -358,6 +359,7 @@ Rules:
         console.log("[Gemini] Output preview:", factResult?.slice(0, 300));
 
         if (factResult && factResult.trim().length > 0) {
+          factCheckText = factResult.trim();
           factCheckBlock = `\n\nVERIFIED FACTS (use these, do not invent):\n${factResult}\n\n`;
         }
       } catch (e) {
@@ -726,6 +728,8 @@ Rules:
         blogContent,
         blogId: blog.id,
         images: imagesWithPreview,
+        // Defensive fallback to avoid runtime crash if a stale scope/process lacks this variable.
+        factCheck: typeof factCheckText === "string" ? factCheckText : "",
       });
       return; // Ensure we stop here
     } catch (error) {

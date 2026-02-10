@@ -22,6 +22,9 @@ function App() {
   });
 
   const [blogContent, setBlogContent] = useState("");
+  // TEMP DEBUG: Show Gemini fact-check output in UI for verification.
+  // TODO(PRODUCTION): Remove this state and related UI before release.
+  const [factCheckText, setFactCheckText] = useState("");
   const [images, setImages] = useState([]);
   const [blogId, setBlogId] = useState(null);
   const [refreshingSection, setRefreshingSection] = useState(null);
@@ -98,6 +101,7 @@ function App() {
       setLoading(true);
       setError("");
       setBlogContent("");
+      setFactCheckText("");
       setImages([]);
 
       const headers = {
@@ -137,6 +141,7 @@ function App() {
       }
 
       setBlogContent(data.blogContent);
+      setFactCheckText(data.factCheck || "");
       setImages(data.images || []);
       setBlogId(data.blogId);
     } catch (err) {
@@ -660,6 +665,13 @@ Generated: ${new Date().toLocaleString()}
                     __html: marked.parse(blogContent),
                   }}
                 />
+                {/* TEMP DEBUG SECTION: Remove before production deployment. */}
+                {factCheckText && (
+                  <div className="fact-check-preview">
+                    <h3>Gemini Fact Check (Temporary Debug View)</h3>
+                    <pre>{factCheckText}</pre>
+                  </div>
+                )}
                 {images.length > 0 && (
                   <div className="image-preview">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
